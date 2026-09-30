@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Evidence is excluded from both cloud backup and device-to-device transfer.
+
+    This is not tidiness. A restored backup has no access to this device's
+    Keystore key, so it would contain ciphertext that can never be decrypted.
+    Restoring it would give the user a folder of unreadable files that look like
+    lost evidence, which is worse than a clean, explicit absence.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+    </device-transfer>
+</data-extraction-rules>

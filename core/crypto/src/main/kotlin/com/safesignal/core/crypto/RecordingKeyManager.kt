@@ -106,7 +106,7 @@ class RecordingKeyManager(
  *
  * @property dataKey the DEK. Call [clear] as soon as the final segment is sealed.
  */
-class RecordingKeyMaterial(
+data class RecordingKeyMaterial(
     val recordingId: String,
     val dataKey: ByteArray,
     val wrappedKey: WrappedKey,

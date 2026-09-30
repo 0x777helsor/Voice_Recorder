@@ -27,6 +27,14 @@ data class RecordingConfig(
     /** Hard cap. Recording always finalizes when reached (SPEC §29). */
     val maxDurationSeconds: Int = 60 * 60,
     /**
+     * Seconds of pre-roll to prepend, or 0 for none (SPEC §12).
+     *
+     * Default 0: capturing audio before the user asked for a recording is a real
+     * privacy cost and must be opted into. The audio comes from a bounded RAM ring
+     * that is otherwise discarded, so nothing is persisted pre-activation.
+     */
+    val preBufferSeconds: Int = 0,
+    /**
      * Free-space floor below which recording finalizes safely (SPEC §30).
      *
      * Sized for a plausible worst case: at 48 kHz/16-bit mono a 60 s segment is
@@ -45,6 +53,7 @@ data class RecordingConfig(
         require(maxDurationSeconds >= segmentDurationSeconds) {
             "maxDurationSeconds must be at least one segment"
         }
+        require(preBufferSeconds in 0..15) { "preBufferSeconds must be 0 or 5, 10 or 15" }
     }
 
     val bytesPerFrame: Int get() = channels * bitsPerSample / 8

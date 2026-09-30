@@ -73,16 +73,29 @@ class SegmentCipherTest {
     }
 
     @Test
-    fun `flipping a single plaintext-bearing byte anywhere fails`() {
+    fun `flipping any single byte fails closed`() {
         val sealed = cipher.seal(plaintext, context())
-        // Byte 0 is inside the header magic; byte at HEADER_SIZE+NONCE_SIZE is the
-        // first ciphertext byte. Both must be covered by verification.
-        listOf(0, SegmentCipher.HEADER_SIZE + SegmentCipher.NONCE_SIZE).forEach { index ->
-            val tampered = sealed.bytes.copyOf()
-            tampered[index] = (tampered[index] + 1).toByte()
-            assertThrows("index $index must fail closed", CryptoException.AuthenticationFailed::class.java) {
-                cipher.open(SealedSegment(tampered, sealed.nonce, plaintext.size, sealed.algorithm), context())
-            }
+
+        // Byte 0 is the container magic: the header check rejects it as malformed.
+        val headerTampered = sealed.bytes.copyOf()
+        headerTampered[0] = (headerTampered[0] + 1).toByte()
+        assertThrows("magic must be rejected", CryptoException.MalformedCiphertext::class.java) {
+            cipher.open(SealedSegment(headerTampered, sealed.nonce, plaintext.size, sealed.algorithm), context())
+        }
+
+        // The first ciphertext byte: the AEAD tag must reject it.
+        val bodyIndex = SegmentCipher.HEADER_SIZE + SegmentCipher.NONCE_SIZE
+        val bodyTampered = sealed.bytes.copyOf()
+        bodyTampered[bodyIndex] = (bodyTampered[bodyIndex] + 1).toByte()
+        assertThrows("ciphertext must fail authentication", CryptoException.AuthenticationFailed::class.java) {
+            cipher.open(SealedSegment(bodyTampered, sealed.nonce, plaintext.size, sealed.algorithm), context())
+        }
+
+        // The trailing tag byte.
+        val tagTampered = sealed.bytes.copyOf()
+        tagTampered[tagTampered.size - 1] = (tagTampered[tagTampered.size - 1] + 1).toByte()
+        assertThrows("tag must fail authentication", CryptoException.AuthenticationFailed::class.java) {
+            cipher.open(SealedSegment(tagTampered, sealed.nonce, plaintext.size, sealed.algorithm), context())
         }
     }
 
@@ -132,9 +145,17 @@ class SegmentCipherTest {
     @Test
     fun `truncating a segment fails closed`() {
         val sealed = cipher.seal(plaintext, context())
-        val truncated = sealed.bytes.copyOf(sealed.bytes.size - 5)
+
+        // Cut below the container header: structurally impossible.
+        val belowHeader = sealed.bytes.copyOf(SegmentCipher.HEADER_SIZE + SegmentCipher.NONCE_SIZE - 1)
         assertThrows(CryptoException.MalformedCiphertext::class.java) {
-            cipher.open(SealedSegment(truncated, sealed.nonce, plaintext.size, sealed.algorithm), context())
+            cipher.open(SealedSegment(belowHeader, sealed.nonce, plaintext.size, sealed.algorithm), context())
+        }
+
+        // Cut inside the ciphertext: the header still parses, the tag must fail.
+        val insideBody = sealed.bytes.copyOf(sealed.bytes.size - 5)
+        assertThrows(CryptoException.AuthenticationFailed::class.java) {
+            cipher.open(SealedSegment(insideBody, sealed.nonce, plaintext.size, sealed.algorithm), context())
         }
     }
 

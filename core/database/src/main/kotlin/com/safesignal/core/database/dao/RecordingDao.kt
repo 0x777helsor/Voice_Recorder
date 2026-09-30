@@ -88,8 +88,10 @@ interface RecordingDao {
     @Query("DELETE FROM recordings WHERE recording_id = :recordingId")
     suspend fun deleteRecording(recordingId: String)
 
-    @Query("DELETE FROM recordings WHERE delete_after IS NOT NULL AND delete_after <= :now")
-    suspend fun getExpiredByRetention(now: Long): List<RecordingEntity>
+    // Retention selection is a SELECT, not a DELETE: SPEC §53 requires explicit
+    // user confirmation, so the caller must see the rows before anything is removed.
+    @Query("SELECT * FROM recordings WHERE delete_after IS NOT NULL AND delete_after <= :now")
+    suspend fun findExpiredByRetention(now: Long): List<RecordingEntity>
 
     @Query("SELECT COUNT(*) FROM recordings")
     suspend fun count(): Int

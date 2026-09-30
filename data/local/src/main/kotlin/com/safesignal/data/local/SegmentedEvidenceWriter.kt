@@ -51,7 +51,7 @@ class SegmentedEvidenceWriter(
 ) {
     private val cipherContextFactory: (Int, Int) -> EncryptionContext = { sequence, length ->
         keyMaterial.toEncryptionContext(
-            segmentId = segmentIdFor(sequence),
+            segmentId = segmentIdFor(recordingId, sequence),
             sequenceNumber = sequence,
             plaintextLength = length,
         )
@@ -82,7 +82,7 @@ class SegmentedEvidenceWriter(
         }
 
         val context = keyMaterial.toEncryptionContext(
-            segmentId = segmentIdFor(sequenceNumber),
+            segmentId = segmentIdFor(recordingId, sequenceNumber),
             sequenceNumber = sequenceNumber,
             plaintextLength = plaintextLength,
         )
@@ -105,11 +105,11 @@ class SegmentedEvidenceWriter(
         if (!tmp.renameTo(target)) {
             // Fall back to an explicit move; some OEM filesystems reject renameTo
             // across the same directory under low storage.
-            if (!tmp.copyTo(target, overwrite = false).isSuccessful || target.exists() == false) {
-                tmp.delete()
+            tmp.copyTo(target, overwrite = false)
+            tmp.delete()
+            if (!target.exists()) {
                 throw IOException("Atomic commit failed for segment $sequenceNumber")
             }
-            tmp.delete()
         }
         fsyncDirectory(recordingDirectory)
 
@@ -118,7 +118,7 @@ class SegmentedEvidenceWriter(
             sequenceNumber = sequenceNumber,
             segmentId = context.segmentId,
             fileName = target.name,
-            sealedLengthBytes = sealed.sealedLengthBytes.toLong(),
+            sealedLengthBytes = sealed.sealedLength.toLong(),
             plaintextLengthBytes = plaintextLength.toLong(),
             sha256 = Digest.sha256Hex(wavPayload),
             sealedAtWallClockMillis = System.currentTimeMillis(),
@@ -135,12 +135,11 @@ class SegmentedEvidenceWriter(
         val file = File(recordingDirectory, committed.fileName)
         if (!file.exists()) throw IOException("Missing segment file ${committed.fileName}")
 
-        val header = with(file.inputStream().buffered()) { stream ->
-            val head = ByteArray(SegmentCipher.HEADER_SIZE + SegmentCipher.NONCE_SIZE)
-            if (stream.read(head) != head.size) {
+        val header = ByteArray(SegmentCipher.HEADER_SIZE + SegmentCipher.NONCE_SIZE)
+        file.inputStream().buffered().use { stream ->
+            if (stream.read(header) != header.size) {
                 throw CryptoException.MalformedCiphertext("truncated header in ${committed.fileName}")
             }
-            head
         }
         cipher.inspectHeader(header)
             ?: throw CryptoException.MalformedCiphertext("not a SafeSignal segment: ${committed.fileName}")
@@ -188,7 +187,7 @@ class SegmentedEvidenceWriter(
                         CommittedSegmentFile(
                             recordingId = recordingId,
                             sequenceNumber = sequence,
-                            segmentId = segmentIdFor(sequence),
+                            segmentId = segmentIdFor(recordingId, sequence),
                             fileName = file.name,
                             sealedLengthBytes = file.length(),
                             plaintextLengthBytes = (info.ciphertextLength - GCM_TAG_BYTES).toLong(),
@@ -200,7 +199,7 @@ class SegmentedEvidenceWriter(
 
                 SegmentDigest(
                     sequenceNumber = sequence,
-                    segmentId = segmentIdFor(sequence),
+                    segmentId = segmentIdFor(recordingId, sequence),
                     sealedLengthBytes = file.length(),
                     plaintextLengthBytes = plaintext.size.toLong(),
                     sha256 = Digest.sha256Hex(plaintext),
@@ -238,7 +237,7 @@ class SegmentedEvidenceWriter(
          * filesystem alone, without the database. It still cannot collide across
          * recordings because the recording id is a random 128-bit value.
          */
-        fun segmentIdFor(sequence: Int): String =
+        fun segmentIdFor(recordingId: String, sequence: Int): String =
             Digest.sha256Hex("$recordingId:$sequence").substring(0, 24)
     }
 }

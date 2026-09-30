@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    All user-facing text lives here so it can be localised and reviewed as copy
+    rather than scattered through Kotlin.
+
+    Copy rules (SPEC §98): never claim guaranteed admissibility, never claim
+    capture beyond the microphone's physical reach, and never imply that SafeSignal
+    cannot be detected or stopped.
+-->
+<resources>
+    <string name="app_name">SafeSignal</string>
+
+    <!-- Onboarding / consent -->
+    <string name="onboarding_title">SafeSignal</string>
+    <string name="onboarding_body">SafeSignal helps you preserve emergency audio when you cannot
+        safely operate your phone. It works locally first, depends on the physical microphone of
+        your device, preserves the original recording, and synchronises encrypted evidence only
+        when you have enabled it.</string>
+    <string name="onboarding_microphone_heading">Emergency Listening</string>
+    <string name="onboarding_microphone_body">Your phone will listen locally for your activation
+        phrase.\n\nWhen activation is detected:\n• recording will begin;\n• the recording will be
+        encrypted locally;\n• synchronisation will occur only if enabled;\n• Android will show the
+        required microphone and foreground-service indicators;\n• battery usage may increase.\n\nUse
+        only where lawful.</string>
+    <string name="onboarding_permission_rationale">SafeSignal needs the microphone to listen for your
+        activation phrase and to record after activation. Recording only ever happens after you have
+        armed Emergency Listening, and Android shows its own microphone indicator while it
+        does.</string>
+    <string name="onboarding_continue">Continue</string>
+    <string name="onboarding_grant_microphone">Allow microphone</string>
+
+    <!-- Home -->
+    <string name="home_title">SafeSignal</string>
+    <string name="home_emergency_listening">Emergency Listening</string>
+    <string name="home_disabled">Disabled</string>
+    <string name="home_enabled">Active</string>
+    <string name="home_enable">Enable Emergency Listening</string>
+    <string name="home_disable">Disable Emergency Listening</string>
+    <string name="home_recent_recordings">Recent recordings</string>
+    <string name="home_no_recordings">No recordings yet</string>
+    <string name="home_system_status">System status</string>
+    <string name="status_microphone_ready">Microphone: ready</string>
+    <string name="status_microphone_unavailable">Microphone: unavailable</string>
+    <string name="status_encryption_ready">Encryption: ready</string>
+    <string name="status_encryption_unavailable">Encryption: unavailable</string>
+    <string name="status_storage_available">Storage: %1$s free</string>
+    <string name="status_cloud_not_configured">Cloud: not configured</string>
+    <string name="status_cloud_synced">Cloud: synced</string>
+    <string name="status_cloud_pending">Cloud: %1$s recording(s) waiting</string>
+
+    <!-- Listening -->
+    <string name="listening_title">SafeSignal</string>
+    <string name="listening_active">Emergency Listening active</string>
+    <string name="listening_explanation">Listening locally for:</string>
+    <string name="listening_not_recording">Audio is not being permanently recorded until
+        activation.</string>
+    <string name="listening_battery">Battery: %1$d%%</string>
+    <string name="listening_disable">Disable listening</string>
+
+    <!-- Recording -->
+    <string name="recording_active">Recording active</string>
+    <string name="recording_original_encrypted">Original audio, encrypted on this device</string>
+    <string name="recording_sync_local_only">Synchronisation: not enabled</string>
+    <string name="recording_sync_queued">Synchronisation: waiting</string>
+    <string name="recording_sync_uploading">Synchronisation: uploading</string>
+    <string name="recording_sync_synced">Synchronisation: complete</string>
+    <string name="recording_sync_offline">Synchronisation: unavailable — recording continues</string>
+    <string name="recording_stop">Stop recording</string>
+
+    <!-- Readiness -->
+    <string name="readiness_title">SafeSignal readiness</string>
+    <string name="readiness_microphone_permission">Microphone permission</string>
+    <string name="readiness_wake_word">Wake-word engine</string>
+    <string name="readiness_storage">Recording storage</string>
+    <string name="readiness_encryption">Encryption</string>
+    <string name="readiness_foreground_service">Foreground service</string>
+    <string name="readiness_notification">Notification</string>
+    <string name="readiness_local_recording">Local recording</string>
+    <string name="readiness_cloud">Cloud synchronisation</string>
+    <string name="readiness_not_ready">Not ready</string>
+    <string name="readiness_ready">Ready</string>
+    <string name="readiness_cloud_unavailable">Cloud synchronisation unavailable. Local recording
+        remains available.</string>
+
+    <!-- History / details -->
+    <string name="history_title">Recordings</string>
+    <string name="history_empty">Nothing recorded yet.</string>
+    <string name="history_original">Original</string>
+    <string name="history_enhanced_derivative">Enhanced (derivative)</string>
+    <string name="history_transcript_derivative">Transcript (machine-generated derivative)</string>
+    <string name="history_duration">Duration: %1$s</string>
+    <string name="history_activated_by">Activated by: %1$s</string>
+    <string name="history_capture_quality_silent">The microphone captured almost no sound.</string>
+    <string name="history_capture_quality_clipped">The input level was clipping.</string>
+    <string name="history_integrity_verified">Integrity verified.</string>
+    <string name="history_integrity_problems">Integrity problems found: %1$s</string>
+    <string name="history_delete">Delete</string>
+    <string name="history_export">Export evidence package</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_activation">Activation</string>
+    <string name="settings_phrase">Activation phrase</string>
+    <string name="settings_threshold">Confidence threshold: %1$s</string>
+    <string name="settings_cooldown">Cooldown: %1$s</string>
+    <string name="settings_recording">Recording</string>
+    <string name="settings_format">Audio format</string>
+    <string name="settings_segment_duration">Segment length</string>
+    <string name="settings_max_duration">Maximum recording length</string>
+    <string name="settings_prebuffer">Pre-roll</string>
+    <string name="settings_prebuffer_disabled">Disabled — nothing is captured before activation</string>
+    <string name="settings_prebuffer_disclosure">Pre-roll keeps a few seconds of audio in memory
+        before activation so that the start of an incident is captured. This audio is held only in
+        RAM and is discarded if you do not activate. It is a privacy cost and is off unless you
+        choose it.</string>
+    <string name="settings_sync">Synchronisation</string>
+    <string name="settings_sync_enabled">Upload encrypted evidence when available</string>
+    <string name="settings_sync_wifi_only">Upload on Wi-Fi only</string>
+    <string name="settings_retention">Retention</string>
+    <string name="settings_retention_keep">Keep on this device after upload</string>
+    <string name="settings_enhancement">Audio enhancement</string>
+    <string name="settings_enhancement_disclosure">Enhancement creates a separate derivative file.
+        The original recording is always preserved unchanged.</string>
+    <string name="settings_transcription">Transcription</string>
+    <string name="settings_transcription_disclosure">Transcripts are machine-generated derivatives.
+        They do not replace the original audio. Cloud transcription requires a separate,
+        explicit opt-in.</string>
+    <string name="settings_battery">Battery</string>
+    <string name="settings_battery_guidance">Battery optimisation may affect long-running emergency
+        listening on some devices. SafeSignal will not attempt to bypass Android power
+        management.</string>
+
+    <!-- Legal / privacy -->
+    <string name="legal_title">Legal and privacy</string>
+    <string name="legal_recording_law">Recording laws vary by jurisdiction. You are responsible for
+        understanding and complying with the laws that apply where you are. SafeSignal does not
+        make recording lawful.</string>
+    <string name="legal_admissibility">SafeSignal uses integrity-preserving storage and export
+        mechanisms. Legal admissibility and evidentiary weight depend on the applicable
+        jurisdiction, the circumstances, authenticity requirements and the relevant authority or
+        court. Consult a qualified legal professional where appropriate.</string>
+    <string name="privacy_listening">SafeSignal listens locally for your activation phrase while
+        Emergency Listening is enabled. Audio is not permanently recorded until activation.</string>
+    <string name="privacy_recording">When activated, SafeSignal records using the device
+        microphone.</string>
+    <string name="privacy_sync">Recordings remain on the device unless synchronisation is
+        enabled.</string>
+    <string name="privacy_enhancement">Enhanced audio is a derivative copy. The original recording
+        is preserved.</string>
+    <string name="privacy_transcription">Transcripts are machine-generated and do not replace the
+        original audio.</string>
+    <string name="privacy_microphone_limits">Phone microphones have physical limits. Distance,
+        walls, wind, handling, orientation, obstruction, competing sounds, room acoustics and
+        speaker volume can all affect whether speech is intelligible. No application can recover
+        speech that never reached the microphone.</string>
+
+    <!-- Test activation -->
+    <string name="test_title">SafeSignal test</string>
+    <string name="test_disclaimer">This is a test. Recordings made in test mode are labelled as
+        tests and are not uploaded unless you separately choose to.</string>
+    <string name="test_run">Run SafeSignal test</string>
+    <string name="test_step_waiting">Waiting for activation…</string>
+    <string name="test_step_triggered">Phrase detected</string>
+    <string name="test_step_recording">Recording started</string>
+    <string name="test_step_encryption">Encryption working</string>
+    <string name="test_step_storage">Storage working</string>
+    <string name="test_step_stop">Stop mechanism working</string>
+    <string name="test_done">Test complete</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_listening">Emergency Listening</string>
+    <string name="notification_channel_listening_description">Shown while SafeSignal is armed and
+        listening locally for your activation phrase.</string>
+    <string name="notification_channel_recording">Emergency Recording</string>
+    <string name="notification_channel_recording_description">Shown while SafeSignal is
+        recording.</string>
+    <string name="notification_listening_title">SafeSignal</string>
+    <string name="notification_listening_text">Emergency Listening active</string>
+    <string name="notification_recording_title">SafeSignal</string>
+    <string name="notification_recording_text">Emergency recording active</string>
+    <string name="notification_action_stop">STOP</string>
+
+    <!-- Errors -->
+    <string name="error_microphone_unavailable_title">Microphone unavailable</string>
+    <string name="error_microphone_unavailable_detail">Android has not granted microphone access, or
+        another app is using it. Any audio already preserved is still on this device.</string>
+    <string name="error_low_storage_title">Storage low</string>
+    <string name="error_low_storage_detail">The recording was stopped and sealed before storage ran
+        out.</string>
+    <string name="error_max_duration_title">Recording length reached</string>
+    <string name="error_max_duration_detail">The recording was stopped at the length you set and has
+        been sealed.</string>
+    <string name="error_encryption_failed_title">Encryption failed</string>
+    <string name="error_encryption_failed_detail">SafeSignal stopped rather than saving audio it
+        could not protect. Nothing was written in plain form.</string>
+    <string name="error_wake_word_unavailable_title">Wake-word engine unavailable</string>
+    <string name="error_wake_word_unavailable_detail">Physical and test triggers remain available.</string>
+</resources>

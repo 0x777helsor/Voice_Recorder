@@ -157,8 +157,12 @@ object EvidenceIntegrity {
         actualSegments: List<SegmentDigest>,
     ): IntegrityReport {
         val issues = buildList {
+            // The manifest defines canonical order. The actual list is compared
+            // POSITIONALLY and deliberately NOT sorted: sorting both sides would
+            // normalise a reordered reconstruction back into the expected order
+            // and silently hide exactly the tampering we need to detect.
             val expected = manifest.segments.sortedBy { it.sequenceNumber }
-            val actual = actualSegments.sortedBy { it.sequenceNumber }
+            val actual = actualSegments
 
             if (expected.size != actual.size) {
                 add(

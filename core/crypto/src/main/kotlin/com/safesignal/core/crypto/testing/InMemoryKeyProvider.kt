@@ -30,7 +30,10 @@ class InMemoryKeyProvider(
     private val keyEstablishmentKeys = mutableMapOf<String, SecretKey>()
     private val signingKeys = mutableMapOf<String, KeyPairEntry>()
 
-    private data class KeyPairEntry(privateKey: java.security.PrivateKey, publicKey: java.security.PublicKey)
+    private data class KeyPairEntry(
+        val privateKey: java.security.PrivateKey,
+        val publicKey: java.security.PublicKey,
+    )
 
     /** Set by tests that want to simulate a lost or invalidated key. */
     var simulateKeyLoss: Boolean = false

@@ -79,7 +79,8 @@ class MockWakeWordEngine(
             engineVersion = engineVersion,
             source = source,
         )
-        return _events.emit(event)
+        _events.emit(event)
+        return true
     }
 }
 

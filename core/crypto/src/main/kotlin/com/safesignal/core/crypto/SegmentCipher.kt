@@ -2,6 +2,7 @@ package com.safesignal.core.crypto
 
 import java.security.SecureRandom
 import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
 import javax.crypto.spec.GCMParameterSpec
 
 /**
@@ -50,14 +51,14 @@ class SegmentCipher(
         try {
             val nonce = ByteArray(NONCE_SIZE).also(random::nextBytes)
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, context.dataKey, GCMParameterSpec(GCM_TAG_BITS, nonce))
+            cipher.init(Cipher.ENCRYPT_MODE, context.secretKey(), GCMParameterSpec(GCM_TAG_BITS, nonce))
             cipher.updateAAD(context.aad)
             val ciphertext = cipher.doFinal(plaintext)
 
             val out = ByteArray(HEADER_SIZE + nonce.size + ciphertext.size)
             MAGIC.copyInto(out, 0)
-            out[4] = CONTAINER_VERSION
-            out[5] = ALGORITHM_AES_256_GCM
+            out[4] = CONTAINER_VERSION.toByte()
+            out[5] = ALGORITHM_AES_256_GCM.toByte()
             // bytes 6..7 remain zero
             nonce.copyInto(out, HEADER_SIZE)
             ciphertext.copyInto(out, HEADER_SIZE + nonce.size)
@@ -85,7 +86,7 @@ class SegmentCipher(
         val nonce = bytes.copyOfRange(HEADER_SIZE, HEADER_SIZE + NONCE_SIZE)
         val ciphertext = bytes.copyOfRange(HEADER_SIZE + NONCE_SIZE, bytes.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, context.dataKey, GCMParameterSpec(GCM_TAG_BITS, nonce))
+        cipher.init(Cipher.DECRYPT_MODE, context.secretKey(), GCMParameterSpec(GCM_TAG_BITS, nonce))
         cipher.updateAAD(context.aad)
         cipher.doFinal(ciphertext)
     } catch (e: CryptoException) {
@@ -130,8 +131,8 @@ class SegmentCipher(
 
     companion object {
         val MAGIC = byteArrayOf('S'.code.toByte(), 'S'.code.toByte(), 'E'.code.toByte(), 'G'.code.toByte())
-        const val CONTAINER_VERSION: Byte = 1
-        const val ALGORITHM_AES_256_GCM: Byte = 1
+        const val CONTAINER_VERSION = 1
+        const val ALGORITHM_AES_256_GCM = 1
         const val HEADER_SIZE = 8
         const val NONCE_SIZE = 12
         const val GCM_TAG_BITS = 128
@@ -180,6 +181,15 @@ class EncryptionContext(
     val plaintextLength: Int,
     val dataKey: ByteArray,
 ) {
+    /**
+     * Wraps the raw DEK bytes in a [SecretKeySpec] for the Cipher API.
+     *
+     * The bytes are copied into a fresh spec on every call rather than cached:
+     * a cached [SecretKeySpec] would retain a reference to the key longer than
+     * necessary, and [RecordingKeyMaterial.clear] must be able to invalidate it.
+     */
+    fun secretKey(): SecretKeySpec = SecretKeySpec(dataKey, "AES")
+
     /** Canonical, unambiguous serialisation. Order and separators are fixed. */
     val aad: ByteArray = buildAad(recordingId, segmentId, sequenceNumber, plaintextLength)
 

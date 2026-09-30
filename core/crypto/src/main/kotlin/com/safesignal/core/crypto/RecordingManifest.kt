@@ -133,71 +133,71 @@ data class RecordingManifest(
      * half-populated manifest, because a partially-parsed manifest could make a
      * corrupted package look intact.
      */
+    companion object {
     fun fromJson(text: String): RecordingManifest {
-        val root = MiniJson.parse(text).asObject()
-        val segments = root.fields["segments"]
-            ?.asArray()
-            ?.items
-            ?.map { item ->
-                val o = item.asObject()
-                SegmentDigest(
-                    sequenceNumber = o.requiredInt("sequenceNumber"),
-                    segmentId = o.requiredString("segmentId"),
-                    sealedLengthBytes = o.requiredLong("sealedLengthBytes"),
-                    plaintextLengthBytes = o.requiredLong("plaintextLengthBytes"),
-                    sha256 = o.requiredString("sha256"),
-                )
-            }
-            .orEmpty()
+              val root = MiniJson.parse(text).asObject()
+          val segments = root.fields["segments"]
+              ?.asArray()
+              ?.items
+              ?.map { item ->
+                  val o = item.asObject()
+                  SegmentDigest(
+                      sequenceNumber = o.requiredInt("sequenceNumber"),
+                      segmentId = o.requiredString("segmentId"),
+                      sealedLengthBytes = o.requiredLong("sealedLengthBytes"),
+                      plaintextLengthBytes = o.requiredLong("plaintextLengthBytes"),
+                      sha256 = o.requiredString("sha256"),
+                  )
+              }
+              .orEmpty()
 
-        return RecordingManifest(
-            recordingId = root.requiredString("recordingId"),
-            manifestVersion = root.requiredInt("manifestVersion"),
-            appVersion = root.requiredString("appVersion"),
-            encryptionVersion = root.requiredInt("encryptionVersion"),
-            keyVersion = root.requiredInt("keyVersion"),
-            keyProvider = root.requiredString("keyProvider"),
-            audioFormat = root.requiredString("audioFormat"),
-            sampleRateHz = root.requiredInt("sampleRateHz"),
-            channels = root.requiredInt("channels"),
-            segmentCount = root.requiredInt("segmentCount"),
-            totalSealedBytes = root.requiredLong("totalSealedBytes"),
-            totalPlaintextBytes = root.requiredLong("totalPlaintextBytes"),
-            recordingSha256 = root.requiredString("recordingSha256"),
-            startedAtWallClockMillis = root.requiredLong("startedAtWallClockMillis"),
-            endedAtWallClockMillis = root.requiredLong("endedAtWallClockMillis"),
-            startedElapsedRealtimeMillis = root.requiredLong("startedElapsedRealtimeMillis"),
-            endedElapsedRealtimeMillis = root.requiredLong("endedElapsedRealtimeMillis"),
-            activationSource = root.requiredString("activationSource"),
-            activationConfidence = (root.fields["activationConfidence"].orNull() as? JsonValue.Num)?.value?.toFloat(),
-            wakeWordEngineVersion = (root.fields["wakeWordEngineVersion"].orNull() as? JsonValue.Str)?.value,
-            deviceTimezoneId = root.requiredString("deviceTimezoneId"),
-            segments = segments,
-            isTestRecording = (root.fields["isTestRecording"] as? JsonValue.Bool)?.value ?: false,
-        )
-    }
+          return RecordingManifest(
+              recordingId = root.requiredString("recordingId"),
+              manifestVersion = root.requiredInt("manifestVersion"),
+              appVersion = root.requiredString("appVersion"),
+              encryptionVersion = root.requiredInt("encryptionVersion"),
+              keyVersion = root.requiredInt("keyVersion"),
+              keyProvider = root.requiredString("keyProvider"),
+              audioFormat = root.requiredString("audioFormat"),
+              sampleRateHz = root.requiredInt("sampleRateHz"),
+              channels = root.requiredInt("channels"),
+              segmentCount = root.requiredInt("segmentCount"),
+              totalSealedBytes = root.requiredLong("totalSealedBytes"),
+              totalPlaintextBytes = root.requiredLong("totalPlaintextBytes"),
+              recordingSha256 = root.requiredString("recordingSha256"),
+              startedAtWallClockMillis = root.requiredLong("startedAtWallClockMillis"),
+              endedAtWallClockMillis = root.requiredLong("endedAtWallClockMillis"),
+              startedElapsedRealtimeMillis = root.requiredLong("startedElapsedRealtimeMillis"),
+              endedElapsedRealtimeMillis = root.requiredLong("endedElapsedRealtimeMillis"),
+              activationSource = root.requiredString("activationSource"),
+              activationConfidence = (root.fields["activationConfidence"].orNull() as? JsonValue.Num)?.value?.toFloat(),
+              wakeWordEngineVersion = (root.fields["wakeWordEngineVersion"].orNull() as? JsonValue.Str)?.value,
+              deviceTimezoneId = root.requiredString("deviceTimezoneId"),
+              segments = segments,
+              isTestRecording = (root.fields["isTestRecording"] as? JsonValue.Bool)?.value ?: false,
+          )
+      }
 
-    private companion object {
-        fun num(value: Long): JsonValue = JsonValue.Num(value.toDouble(), value.toString())
-        fun num(value: Int): JsonValue = JsonValue.Num(value.toDouble(), value.toString())
+          fun num(value: Long): JsonValue = JsonValue.Num(value.toDouble(), value.toString())
+          fun num(value: Int): JsonValue = JsonValue.Num(value.toDouble(), value.toString())
 
-        fun jsonObject(vararg pairs: Pair<String, JsonValue>): JsonValue.Obj =
-            JsonValue.Obj(linkedMapOf(*pairs))
-    }
-}
+          fun jsonObject(vararg pairs: Pair<String, JsonValue>): JsonValue.Obj =
+              JsonValue.Obj(linkedMapOf(*pairs))
+      }
+  }
 
-/**
- * A manifest plus its detached signature.
- *
- * The signature is *detached* so the manifest stays readable by anyone: the
- * exported JSON is human-readable, and verification is a separate step.
- */
-data class SignedManifest(
-    val manifest: RecordingManifest,
-    /** Base64 signature over [RecordingManifest.canonicalBytes]. */
-    val signatureBase64: String,
-    /** Alias of the Keystore key that signed, for the verifier to locate the key. */
-    val signingKeyAlias: String,
-    /** Base64 of the verification public key, published so third parties can check. */
-    val verificationKeyBase64: String,
-)
+  /**
+   * A manifest plus its detached signature.
+   *
+   * The signature is *detached* so the manifest stays readable by anyone: the
+   * exported JSON is human-readable, and verification is a separate step.
+   */
+  data class SignedManifest(
+      val manifest: RecordingManifest,
+      /** Base64 signature over [RecordingManifest.canonicalBytes]. */
+      val signatureBase64: String,
+      /** Alias of the Keystore key that signed, for the verifier to locate the key. */
+      val signingKeyAlias: String,
+      /** Base64 of the verification public key, published so third parties can check. */
+      val verificationKeyBase64: String,
+  )

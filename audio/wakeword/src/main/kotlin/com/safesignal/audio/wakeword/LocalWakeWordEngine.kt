@@ -107,7 +107,9 @@ class LocalWakeWordEngine(
         template ?: return Result.success(Unit) // Initialised but not enrolled: listens for nothing.
         if (job?.isActive == true) return Result.success(Unit)
 
-        val created = CoroutineScope(coroutineContext = kotlinx.coroutines.CoroutineName("safesignal-wakeword"))
+        val created = CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.CoroutineName("safesignal-wakeword"),
+        )
         scope = created
         job = created.launch(dispatchers.audio) {
             var window = ShortArray(0)
@@ -158,8 +160,11 @@ class LocalWakeWordEngine(
     private suspend fun analyse(
         window: ShortArray,
         activeConfig: WakeWordConfig,
-        activeTemplate: PhraseTemplate = template ?: return null,
+        suppliedTemplate: PhraseTemplate? = null,
     ): WakeWordEvent? = withContext(dispatchers.default) {
+        // A template is required for matching to mean anything; without one the
+        // engine is initialised but not enrolled, and reports nothing.
+        val activeTemplate = suppliedTemplate ?: template ?: return@withContext null
         val features = FeatureExtractor.extract(window, activeTemplate.sampleRateHz)
         if (features == null) return@withContext null
 
@@ -201,7 +206,7 @@ data class PhraseTemplate(
     val syllableCount: Int,
 ) {
     fun similarity(features: FrameFeatures): Float {
-        if (features.bandEnergies.size != bandEnergies.size) return 0f
+        if (features.logBandEnergies.size != bandEnergies.size) return 0f
 
         // Normalised energy distance in log space: perceptually closer to how
         // speech energy is distributed than a linear comparison.

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    A microphone glyph. Deliberately obvious rather than abstract: a user glancing
+    at their home screen should be able to tell what this app does. An icon that
+    looks like something else would edge toward the covert behaviour the project
+    refuses to build.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28c-5,0 -9,4 -9,9v14c0,5 4,9 9,9s9,-4 9,-9V37C63,32 59,28 54,28z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42,48v3c0,6.6 5.4,12 12,12s12,-5.4 12,-12v-3h4v3c0,8.4 -6.3,15.3 -14.5,16.2V70h8v4H42.5v-4h8v-2.8C42.3,66.3 36,59.4 36,51v-3H42z" />
+</vector>

@@ -38,6 +38,10 @@ kotlin {
 
 dependencies {
     api(project(":core:common"))
+    // The segmented engine seals through data:local and formats segments with
+    // audio:processing; both are part of its public contract, so both are `api`.
+    api(project(":audio:processing"))
+    api(project(":data:local"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SafeSignal Android manifest.
+
+    The permission list below is the complete, exhaustive set SafeSignal uses.
+    It is deliberately short. Anything not listed here — contacts, SMS,
+    location, camera, accessibility, device administrator — must not be added.
+
+    See core/common/.../permission/SafeSignalPermission.kt, which mirrors this
+    list in code so a new permission has to be a deliberate, reviewable change.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Microphone: required to listen for the activation phrase and to record. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!--
+        POST_NOTIFICATIONS is required on API 33+ for the persistent
+        foreground-service notification to be visible. SafeSignal treats that
+        notification as part of its safety contract, not as an optional extra,
+        so it requests the permission when the user arms listening.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!--
+        API 34+ requires the microphone-specific foreground-service type to be
+        declared and separately permitted before a microphone FGS can start.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!--
+        Foreground service for synchronization. SafeSignal never uses the
+        dataSync type to hold the microphone: recording and synchronization are
+        separate responsibilities, and conflating them would make a network
+        problem look like a capture problem.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!--
+        Scheduling of resumable upload work. NOT a permission the user is asked
+        to grant, and NOT a way to run the microphone: SafeSignal does not
+        capture audio from a worker.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+        Microphone is optional so the app remains installable on devices without
+        one; readiness reporting tells the user rather than crashing.
+    -->
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+
+    <application
+        android:name=".SafeSignalApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SafeSignal"
+        tools:targetApi="34">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.SafeSignal">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            The emergency listening service is declared in :service and merged
+            here. It is intentionally NOT exported and has no intent filter:
+            only this app may start it, and only from a user-visible action.
+        -->
+    </application>
+
+</manifest>

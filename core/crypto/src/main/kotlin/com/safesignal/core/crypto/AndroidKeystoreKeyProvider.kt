@@ -123,7 +123,7 @@ class AndroidKeystoreKeyProvider(
     }
 
     override fun verify(alias: String, data: ByteArray, signature: ByteArray): Boolean {
-        val publicKey = signingPublicKey(alias)
+        val publicKey = requireSigningPublicKey(alias)
         return runCatching {
             Signature.getInstance(SIGNATURE_ALGORITHM).run {
                 initVerify(publicKey)
@@ -131,6 +131,13 @@ class AndroidKeystoreKeyProvider(
                 verify(signature)
             }
         }.getOrDefault(false)
+    }
+
+    /** The verification key as a [PublicKey]; public keys are exportable. */
+    private fun requireSigningPublicKey(alias: String): PublicKey {
+        val entry = keyStore.getCertificate(alias) as? java.security.cert.Certificate
+            ?: throw CryptoException.KeyUnavailable("no signing certificate at alias=$alias")
+        return entry.publicKey
     }
 
     override fun signingPublicKey(alias: String): ByteArray =
