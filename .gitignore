@@ -1,0 +1,19 @@
+# Build output
+build/
+*/build/
+*/*/build/
+.gradle/
+
+# Local toolchain configuration — machine specific, must never be committed.
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Secrets: never commit a real endpoint, key or credential.
+*.jks
+*.keystore
+keystore.properties
+local.defaults.properties
