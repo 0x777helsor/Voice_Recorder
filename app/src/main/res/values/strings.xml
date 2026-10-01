@@ -28,6 +28,7 @@
         does.</string>
     <string name="onboarding_continue">Continue</string>
     <string name="onboarding_grant_microphone">Allow microphone</string>
+    <string name="onboarding_grant_notifications">Allow notifications</string>
 
     <!-- Home -->
     <string name="home_title">SafeSignal</string>
@@ -79,6 +80,18 @@
     <string name="readiness_cloud">Cloud synchronisation</string>
     <string name="readiness_not_ready">Not ready</string>
     <string name="readiness_ready">Ready</string>
+    <string name="readiness_permission_blocked">Microphone access is blocked. Android will not
+        ask again, so it has to be granted from app settings.</string>
+    <string name="readiness_open_settings">Open app settings</string>
+
+    <!--
+        Shown while the ongoing notification would not be visible. SafeSignal
+        refuses to record in that state, and this says so rather than letting the
+        user discover it by tapping a button that does nothing.
+    -->
+    <string name="readiness_notification_required">SafeSignal will not record while notifications
+        are hidden. Recording is always shown to you with a visible, ongoing
+        notification — that is what stops it from being undetectable.</string>
     <string name="readiness_cloud_unavailable">Cloud synchronisation unavailable. Local recording
         remains available.</string>
 
@@ -159,6 +172,9 @@
     <string name="test_disclaimer">This is a test. Recordings made in test mode are labelled as
         tests and are not uploaded unless you separately choose to.</string>
     <string name="test_run">Run SafeSignal test</string>
+    <string name="test_start_blocked">SafeSignal could not start recording. This usually means
+        Android blocked a background start. Any audio already preserved is still on
+        this device.</string>
     <string name="test_step_waiting">Waiting for activation…</string>
     <string name="test_step_triggered">Phrase detected</string>
     <string name="test_step_recording">Recording started</string>
@@ -167,18 +183,12 @@
     <string name="test_step_stop">Stop mechanism working</string>
     <string name="test_done">Test complete</string>
 
-    <!-- Notifications -->
-    <string name="notification_channel_listening">Emergency Listening</string>
-    <string name="notification_channel_listening_description">Shown while SafeSignal is armed and
-        listening locally for your activation phrase.</string>
-    <string name="notification_channel_recording">Emergency Recording</string>
-    <string name="notification_channel_recording_description">Shown while SafeSignal is
-        recording.</string>
-    <string name="notification_listening_title">SafeSignal</string>
-    <string name="notification_listening_text">Emergency Listening active</string>
-    <string name="notification_recording_title">SafeSignal</string>
-    <string name="notification_recording_text">Emergency recording active</string>
-    <string name="notification_action_stop">STOP</string>
+    <!--
+        Notification copy lives in :service (safesignal_notification_*), with the
+        module that actually renders it. It was duplicated here first, which meant
+        two definitions of the same user-facing sentence and no way to tell which
+        one the notification used.
+    -->
 
     <!-- Errors -->
     <string name="error_microphone_unavailable_title">Microphone unavailable</string>

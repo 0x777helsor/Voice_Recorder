@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Notification and service copy.
+
+    This copy lives with the service rather than in :app because the module that
+    renders it is the module that owns it, and a library cannot read the
+    application module's resources. The app module reads these through the merged
+    resource table, so there is still exactly one definition of each string.
+
+    Copy rules (SPEC §98): never claim guaranteed admissibility, never imply the
+    recording cannot be detected or stopped, and never suggest SafeSignal can
+    capture beyond the microphone's physical reach.
+-->
+<resources>
+
+    <string name="safesignal_notification_channel_recording">Emergency Recording</string>
+    <string name="safesignal_notification_channel_recording_description">Shown while SafeSignal is
+        recording. The microphone is in use for the whole time this notification is visible.</string>
+    <string name="safesignal_notification_channel_listening">Emergency Listening</string>
+    <string name="safesignal_notification_channel_listening_description">Shown while SafeSignal is
+        armed and listening locally for your activation phrase.</string>
+
+    <string name="safesignal_notification_recording_title">SafeSignal is recording</string>
+    <string name="safesignal_notification_recording_text">Recording and encrypting on this
+        device.</string>
+    <string name="safesignal_notification_listening_title">SafeSignal is listening</string>
+    <string name="safesignal_notification_listening_text">Listening locally for your activation
+        phrase.</string>
+    <string name="safesignal_notification_action_stop">Stop</string>
+    <string name="safesignal_notification_summary_title">SafeSignal test recording</string>
+
+    <!--
+        Shown when the service refuses to start because the ongoing notification
+        would not be visible. Refusing is deliberate; see EmergencyAudioService.
+    -->
+    <string name="safesignal_service_notification_blocked">SafeSignal will not record while its
+        notification is hidden. Allow notifications for SafeSignal, then try again.</string>
+
+    <string name="safesignal_service_start_failed">SafeSignal could not start recording. Any audio
+        already preserved is still on this device.</string>
+
+    <string name="safesignal_test_complete">Test complete: %1$d sealed segment(s), %2$s. The audio is
+        encrypted and stored on this device.</string>
+    <string name="safesignal_test_no_audio">The test finished but captured no audio. Check that
+        nothing else is using the microphone.</string>
+    <string name="safesignal_test_failed">Test failed: %1$s</string>
+
+</resources>

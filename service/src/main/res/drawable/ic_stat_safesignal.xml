@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Status-bar icon.
+
+    A silhouette, because Android masks notification icons to a single colour:
+    anything with internal detail is destroyed by the mask. The shape is an
+    unmistakable microphone rather than a logo, so the notification says what is
+    happening. An indicator that a user cannot read at a glance is an indicator
+    they will learn to ignore.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2c-1.66,0 -3,1.34 -3,3v6c0,1.66 1.34,3 3,3s3,-1.34 3,-3V5c0,-1.66 -1.34,-3 -3,-3z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17,11c0,2.76 -2.24,5 -5,5s-5,-2.24 -5,-5H5c0,3.53 2.61,6.43 6,6.92V21h2v-3.08c3.39,-0.49 6,-3.39 6,-6.92h-2z" />
+</vector>

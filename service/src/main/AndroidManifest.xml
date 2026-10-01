@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The emergency audio service is declared here rather than in :app, so that the
+    component and the code that implements it live in the same module and cannot
+    drift apart. This fragment is merged into the application manifest.
+
+    `foregroundServiceType="microphone"` is mandatory on API 34+: without it the
+    platform refuses to start a microphone foreground service, and with the wrong
+    type it throws `SecurityException`. It is also an accurate statement of what
+    the service does, which is the point — Android requires the type precisely so
+    that holding the microphone is always an explicit, declared act.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <service
+            android:name=".EmergencyAudioService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="false" />
+
+    </application>
+
+</manifest>

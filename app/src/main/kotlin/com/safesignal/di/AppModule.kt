@@ -3,6 +3,7 @@ package com.safesignal.di
 import android.content.Context
 import com.safesignal.core.common.concurrent.DefaultDispatcherProvider
 import com.safesignal.core.common.concurrent.DispatcherProvider
+import com.safesignal.core.common.permission.AndroidPermissionChecker
 import com.safesignal.core.common.time.SystemTimeProvider
 import com.safesignal.core.common.time.TimeProvider
 import com.safesignal.core.crypto.AndroidKeystoreKeyProvider
@@ -60,6 +61,19 @@ object AppModule {
     @Singleton
     fun provideEvidenceRoot(@ApplicationContext context: Context): File =
         File(context.noBackupFilesDir, EVIDENCE_DIR).apply { mkdirs() }
+
+    /**
+     * The permission checker is constructed with the application context.
+     *
+     * It only reads permission state, which is process-wide, so a long-lived
+     * instance cannot go stale in a way that matters — and the Activity is
+     * supplied per call for the rationale check, which is genuinely
+     * Activity-scoped.
+     */
+    @Provides
+    @Singleton
+    fun providePermissionChecker(@ApplicationContext context: Context): AndroidPermissionChecker =
+        AndroidPermissionChecker(context)
 
     private const val EVIDENCE_DIR = "evidence"
 }
