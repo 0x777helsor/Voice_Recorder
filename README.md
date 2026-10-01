@@ -22,20 +22,39 @@ slice. Honest statement of what is and is not finished:
 
 | Area | State |
 | --- | --- |
-| Gradle build, module graph, lint configuration | Implemented, builds |
+| Gradle build, module graph, lint configuration | Building clean |
 | `core:common` — state machine, activation gate, logging, clocks, JSON | Implemented, unit-tested |
 | `core:crypto` — AES-256-GCM envelope, Keystore KEK, SHA-256 manifest, ECDSA signing | Implemented, tamper-tested |
 | `core:database` — Room schema, DAOs, transactional segment commit | Implemented |
 | `audio:processing` — rolling pre-buffer, WAV segment writer, quality monitor | Implemented, unit-tested |
 | `audio:capture` — `AudioRecord` source, frame pump, segmented engine | Implemented |
 | `data:local` — segmented encrypted writer, startup reconciler | Implemented, crash-recovery tested |
-| Foreground service, Compose UI, DI wiring | **Not yet implemented** |
-| Wake-word tuning, physical triggers | Stub interfaces only |
-| Synchronisation client, backend, evidence export | **Not yet implemented** |
+| `app` — DI graph, manifest, readiness screen, launcher icon | Builds; minimal UI only |
+| Foreground service, notification, full UI, wake-word tuning | **Not implemented** |
+| Physical triggers, sync client, backend, evidence export | **Not implemented** |
 
-Nothing in this repository has been run on a physical device or emulator. See
-[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) — which is deliberately blunt about
-what is unverified.
+### Verification performed
+
+```text
+./gradlew test           BUILD SUCCESSFUL   150 tests, 0 failures
+./gradlew lint           BUILD SUCCESSFUL   abortOnError = true
+./gradlew assembleDebug  BUILD SUCCESSFUL   app-debug.apk (20 MB)
+```
+
+**Nothing has been run on a physical device or emulator.** There is no emulator in
+the development environment, so there is no instrumentation coverage and no
+hardware verification of the microphone, Keystore, foreground-service or power
+behaviour. See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), which is deliberately
+blunt about this.
+
+Test counts by module:
+
+| Module | Tests |
+| --- | --- |
+| `core:common` | 52 |
+| `data:local` | 42 |
+| `core:crypto` | 30 |
+| `audio:processing` | 26 |
 
 ---
 
@@ -46,7 +65,8 @@ Everything else is negotiable. These are not.
 1. **If the network fails, SafeSignal still preserves the recording locally.**
    The network is a synchronisation mechanism, never an activation mechanism and
    never a recording mechanism. `RECORDING → UPLOADING` is not a legal state
-   transition, and the state machine rejects it.
+   transition, the state machine rejects it, and a test fails if anyone adds an
+   upload state to `SafeSignalPhase`.
 
 2. **The original recording is never destructively modified.**
    Audio is captured raw, sealed as-is, and hashed. Enhancement and transcription
@@ -59,13 +79,14 @@ Everything else is negotiable. These are not.
    trick, no boot-time activation, and no mechanism intended to defeat platform
    privacy controls.
 
-There is a fourth, softer but important one:
+And a fourth, softer but important one:
 
 4. **SafeSignal never claims more than the microphone can physically deliver.**
    Distance, walls, wind, handling, orientation, obstruction, room acoustics and
-   speaker volume all affect intelligibility. The app contains no copy suggesting
-   otherwise, and no "long range", "hears everything" or "records through walls"
-   claim appears anywhere in the product.
+   speaker volume all affect intelligibility. No "long range", "hears everything"
+   or "records through walls" claim appears anywhere in the product, and
+   [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) says plainly that a successful test
+   in a quiet room justifies no such claim.
 
 ---
 
@@ -74,25 +95,27 @@ There is a fourth, softer but important one:
 Requires JDK 17 and an Android SDK with `compileSdk 36` installed.
 
 ```bash
-./gradlew test          # unit tests
-./gradlew lint          # Android Lint
-./gradlew assembleDebug # APK
+./gradlew test           # unit tests
+./gradlew lint           # Android Lint
+./gradlew assembleDebug  # debug APK
 ```
 
-The project's toolchain versions are pinned in `gradle/libs.versions.toml`:
+| Component | Version | Why that version |
+| --- | --- | --- |
+| Gradle | 8.13 | — |
+| Android Gradle Plugin | 8.13.2 | — |
+| Kotlin | 2.2.21 | — |
+| KSP | 2.2.21-2.0.4 | Must match Kotlin exactly |
+| Hilt | 2.57.2 | Hilt ≥ 2.60 requires AGP ≥ 9.0 |
+| Compose BOM | 2025.10.01 | Newer BOMs force lifecycle 2.11 → requires AGP 9.1 |
+| compileSdk / targetSdk | 36 | — |
+| minSdk | 26 | Per specification |
 
-| Component | Version |
-| --- | --- |
-| Gradle | 8.13 |
-| Android Gradle Plugin | 8.13.2 |
-| Kotlin | 2.2.21 |
-| KSP | 2.2.21-2.0.4 |
-| Hilt | 2.57.2 |
-| compileSdk / targetSdk | 36 |
-| minSdk | 26 |
+Two of those pins are load-bearing and will bite anyone who raises a version
+casually. See [docs/DECISIONS.md](docs/DECISIONS.md) ADR-007.
 
-Hilt 2.57.x is the newest line supporting AGP 8.x; Hilt ≥ 2.60 requires AGP ≥ 9.
-If you raise the AGP version, raise Hilt in the same change.
+Environment setup, including a non-obvious JDK truststore failure mode, is in
+[docs/TOOLCHAIN.md](docs/TOOLCHAIN.md).
 
 ---
 
@@ -121,7 +144,7 @@ If you raise the AGP version, raise Hilt in the same change.
                               v
                       RECORDING ENGINE
                               |
-                optional RAM pre-buffer (opt-in)
+                optional RAM pre-roll (opt-in, default OFF)
                               |
                               v
                      SEGMENTATION
@@ -137,7 +160,7 @@ If you raise the AGP version, raise Hilt in the same change.
         no internet                      internet
               |                               |
               v                               v
-         LOCAL ONLY                    upload queue  (Phase 6)
+         LOCAL ONLY                    upload queue  (not yet built)
         (kept on device)                        |
                                         resumable upload
                                                   |
@@ -149,18 +172,18 @@ Package layout follows the specification's recommended structure, consolidated
 into fewer Gradle modules to keep the build graph small:
 
 ```
-core/common     state machine, activation gate, logging, clocks, JSON
-core/crypto     envelope encryption, manifest, signing
-core/database   Room schema
-audio/capture   AudioRecord source, frame pump, recording engine
-audio/wakeword  wake-word boundary, mock and local template engines
+core/common      state machine, activation gate, logging, clocks, JSON
+core/crypto      envelope encryption, manifest, signing
+core/database    Room schema
+audio/capture    AudioRecord source, frame pump, recording engine
+audio/wakeword   wake-word boundary, mock and local template engines
 audio/processing pre-buffer, WAV writer, quality monitor
-data/local      segmented encrypted store, startup reconciler
-data/remote     synchronisation boundary (not yet implemented)
-data/repository orchestration, sync worker (not yet implemented)
-service         foreground service (not yet implemented)
-feature/*       Compose UI (not yet implemented)
-app             DI wiring, navigation (not yet implemented)
+data/local       segmented encrypted store, startup reconciler
+data/remote      sync boundary (not yet implemented)
+data/repository  orchestration, sync worker (not yet implemented)
+service          foreground service (not yet implemented)
+feature/*        Compose UI (not yet implemented)
+app              DI graph, manifest, minimal readiness screen
 ```
 
 ---
@@ -175,23 +198,27 @@ app             DI wiring, navigation (not yet implemented)
 | [PRIVACY.md](PRIVACY.md) | What is collected, when, and what is never collected |
 | [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) | What is unverified, incomplete or worse than advertised |
 | [QA_CHECKLIST.md](QA_CHECKLIST.md) | Manual test matrices, including the wake-word honesty matrix |
+| [API.md](API.md) | Backend design contract (not yet implemented) |
 | [LEGAL_DISCLAIMER.md](LEGAL_DISCLAIMER.md) | Recording-law and admissibility caveats |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Release build, signing, release checklist |
 | [ANDROID_COMPATIBILITY_MATRIX.md](ANDROID_COMPATIBILITY_MATRIX.md) | Per-API-level behaviour |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Why non-obvious choices were made |
+| [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) | Build environment setup |
 
 ---
 
 ## Safety boundary
 
-SafeSignal records audio. That is inherently sensitive, and in many
-jurisdictions recording other people requires their consent or is otherwise
-restricted. **Recording law varies by jurisdiction and SafeSignal does not make
-recording lawful.** See [LEGAL_DISCLAIMER.md](LEGAL_DISCLAIMER.md).
+SafeSignal records audio. That is inherently sensitive, and in many jurisdictions
+recording other people requires their consent or is otherwise restricted.
+**Recording law varies by jurisdiction and SafeSignal does not make recording
+lawful.** See [LEGAL_DISCLAIMER.md](LEGAL_DISCLAIMER.md).
 
 SafeSignal also does not claim that anything it produces is automatically
-admissible as evidence. It uses integrity-preserving storage and export
-mechanisms. Evidentiary weight depends on the applicable jurisdiction,
-circumstances, authenticity requirements and the relevant authority or court.
-Consult a qualified legal professional where appropriate.
+admissible as evidence. It uses integrity-preserving storage and export mechanisms.
+Evidentiary weight depends on the applicable jurisdiction, circumstances,
+authenticity requirements and the relevant authority or court. Consult a qualified
+legal professional where appropriate.
 
 ---
 

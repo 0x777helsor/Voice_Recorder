@@ -213,8 +213,12 @@ private object KeyGenParameterSpecBuilderCompat {
 
         // StrongBox, where available, keeps the KEK inside a dedicated secure
         // element. Requesting it is a hint; devices without it fall back.
-        runCatching {
-            builder.setIsStrongBoxBacked(true)
+        //
+        // setIsStrongBoxBacked() was added in API 28. Wrapping it in runCatching
+        // is NOT sufficient: on API 26/27 the method does not exist, so the call
+        // throws NoSuchMethodError. An explicit version check is required.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            runCatching { builder.setIsStrongBoxBacked(true) }
         }
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
