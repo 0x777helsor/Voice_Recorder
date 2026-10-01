@@ -63,6 +63,21 @@ class EmergencyAudioService : LifecycleService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var sessionJob: Job? = null
 
+    /**
+     * Set once [finish] has begun, cleared when a new start is accepted.
+     *
+     * Exists because a start command can arrive *after* the service has torn itself
+     * down, and the symptom of that is actively misleading. Observed on a real
+     * device: a spurious second tap arrived after the 12-second test had finished and
+     * `stopSelf()` had run. The service was still alive, so `onStartCommand` ran,
+     * `startForeground` threw `IllegalStateException` because the service was already
+     * stopping, and the user was told "SafeSignal could not start recording" — a
+     * failure message for an operation that had already succeeded, seconds earlier,
+     * with its evidence sealed. The user had every reason to believe the app was
+     * broken.
+     */
+    private var shuttingDown = false
+
     override fun onCreate() {
         super.onCreate()
         // Idempotent, and defensive: if the application process was created
@@ -83,6 +98,14 @@ class EmergencyAudioService : LifecycleService() {
             "onStartCommand action=${intent?.action} startId=$startId " +
                 "flags=$flags superResult=$superResult",
         )
+
+        // A start command arriving after teardown has begun is a stale delivery, not
+        // a failure. Saying so is the difference between "the app is broken" and
+        // "that tap did nothing because the recording had already finished".
+        if (shuttingDown && intent?.action == ACTION_START_TEST) {
+            Log.w(TAG, "ignoring start request; the previous session is already shutting down")
+            return START_NOT_STICKY
+        }
 
         // A second start while a recording is live must not start another, and
         // must not tear the first one down either.
@@ -137,13 +160,22 @@ class EmergencyAudioService : LifecycleService() {
         // Finalizes and releases rather than abandoning the microphone. See
         // `shutdown` for why the distinction matters.
         controller.shutdown()
-        notifications.cancelAll()
+        // Only the ongoing indicator goes: a summary posted a moment ago is the
+        // user's record that the microphone was used, and cancelling it in
+        // onDestroy took that away at exactly the moment it mattered.
+        notifications.cancelOngoing()
         super.onDestroy()
     }
 
     private fun startTest() {
+        shuttingDown = false
+        // A previous run's summary has served its purpose by the time another test
+        // starts. Dismissing it here — rather than at the end of the previous run —
+        // keeps exactly one summary visible without ever destroying a fresh one.
+        notifications.cancelSummary()
+
         if (!notifications.notificationsVisible()) {
-            notifyUser(getString(R.string.safesignal_service_notification_blocked))
+            notify(getString(R.string.safesignal_service_notification_blocked))
             stopSelf()
             return
         }
@@ -166,7 +198,7 @@ class EmergencyAudioService : LifecycleService() {
                 if (controller.isRecording) {
                     Log.w(TAG, "start refused; leaving the existing recording untouched", started.exceptionOrNull())
                 } else {
-                    notifyUser(getString(R.string.safesignal_service_start_failed))
+                    notify(getString(R.string.safesignal_service_start_failed))
                     finish()
                 }
                 return@launch
@@ -186,14 +218,46 @@ class EmergencyAudioService : LifecycleService() {
         }
     }
 
+    /**
+     * Ends the session, reports what was actually preserved, and releases.
+     *
+     * The reporting deliberately consults the controller's last finalized recording
+     * when [stop] reports "nothing was in progress". That combination is not a
+     * failure — it means the engine finalized itself (duration limit, storage
+     * limit, or the capture dying) before we got here, and the evidence is already
+     * sealed. Reporting it as a failure is how a *successful* 12-second recording
+     * ends up telling the user the app "could not start recording", which is both
+     * false and alarming in a way that would make someone discard real evidence.
+     */
     private suspend fun finish() {
+        shuttingDown = true
+
         val result = controller.stop()
-        result.onSuccess(::reportResult).onFailure { failure ->
-            notifyUser(getString(R.string.safesignal_test_failed, failure.message ?: failure.javaClass.simpleName))
+        // `lastFinalized` is the fallback that matters. The engine finalizes itself
+        // when capture ends, so a stop arriving afterwards finds nothing in
+        // progress and fails — with a perfectly good recording already sealed. Using
+        // only the stop result is what made a successful capture announce that the
+        // app "could not start recording".
+        val finalized = result.getOrNull() ?: controller.lastFinalized.value
+
+        when (val outcome = SessionOutcome.of(finalized, result.exceptionOrNull()?.message)) {
+            is SessionOutcome.Captured -> reportResult(outcome)
+            SessionOutcome.NoAudio -> {
+                Log.w(TAG, "session finished with no audio captured")
+                notify(getString(R.string.safesignal_test_no_audio))
+            }
+            is SessionOutcome.Failed -> {
+                Log.w(TAG, "session ended with no preserved audio", result.exceptionOrNull())
+                notify(getString(R.string.safesignal_test_failed, outcome.reason))
+            }
         }
 
+        // The ongoing "recording" indicator goes. The summary just posted stays:
+        // cancelling both in the same breath removed the only durable record that
+        // the microphone had been used, leaving nothing but a Toast that vanishes
+        // in seconds. See EmergencyNotifications.cancelOngoing.
         stopForeground(STOP_FOREGROUND_REMOVE)
-        notifications.cancelAll()
+        notifications.cancelOngoing()
         stopSelf()
     }
 
@@ -206,18 +270,32 @@ class EmergencyAudioService : LifecycleService() {
      * failure mode, because some devices return success with all-zero buffers when
      * the microphone is muted or obstructed.
      */
-    private fun reportResult(recording: FinalizedRecording) {
-        val text = if (recording.segments.isEmpty()) {
-            getString(R.string.safesignal_test_no_audio)
-        } else {
-            getString(
-                R.string.safesignal_test_complete,
-                recording.segments.size,
-                Formatter.formatShortFileSize(this, recording.totalSealedBytes),
-            )
-        }
+    private fun reportResult(captured: SessionOutcome.Captured) {
+        val recording = captured.recording
+        val text = getString(
+            R.string.safesignal_test_complete,
+            formatDuration(recording.durationMillis),
+            Formatter.formatShortFileSize(this, recording.totalSealedBytes),
+        )
         notifications.postSummary(text)
-        notifyUser(text)
+        notify(text)
+    }
+
+    /**
+     * Renders a duration the way a person would say it.
+     *
+     * `Formatter.formatElapsedTime` is avoided because it emits `MM:SS` with leading
+     * zeroes, which reads as a timestamp rather than a length.
+     */
+    private fun formatDuration(millis: Long): String {
+        val totalSeconds = (millis / 1000).coerceAtLeast(0)
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        return when {
+            minutes > 0 && seconds > 0 -> "$minutes min $seconds sec"
+            minutes > 0 -> "$minutes min"
+            else -> "$seconds sec"
+        }
     }
 
     /**
@@ -249,15 +327,23 @@ class EmergencyAudioService : LifecycleService() {
     } catch (e: IllegalStateException) {
         // ForegroundServiceStartNotAllowedException is a subclass of this.
         Log.w(TAG, "foreground start not allowed", e)
-        notifyUser(getString(R.string.safesignal_service_start_failed))
+        notify(getString(R.string.safesignal_service_start_failed))
         false
     } catch (e: SecurityException) {
         Log.w(TAG, "foreground start denied", e)
-        notifyUser(getString(R.string.safesignal_service_start_failed))
+        notify(getString(R.string.safesignal_service_start_failed))
         false
     }
 
-    private fun notifyUser(message: String) {
+    /**
+     * Tells the user what happened, in the foreground app and as a notification.
+     *
+     * Both, deliberately. A Toast disappears in seconds and is missed entirely if the
+     * app is not in the foreground; the notification persists. Showing only the
+     * notification means a person who never opens SafeSignal never learns that their
+     * microphone was used, which is the failure mode this app exists to avoid.
+     */
+    private fun notify(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 

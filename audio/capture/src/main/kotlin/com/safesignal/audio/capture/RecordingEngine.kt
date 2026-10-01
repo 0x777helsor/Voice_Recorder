@@ -117,7 +117,22 @@ sealed interface RecordingState {
     /** Capture ended normally. */
     data object Stopped : RecordingState
 
-    data class Failed(val reason: String, val recoverable: Boolean) : RecordingState
+    data class Failed(val reason: String, val recoverable: Boolean = false) : RecordingState
+
+    /**
+     * Whether reaching this state implies audio was preserved.
+     *
+     * Deliberately `false` for every state, including [Stopped]. A stopped engine
+     * means the microphone was closed, which says nothing about whether anything was
+     * sealed: a recording that captured nothing also ends in [Stopped]. Only a
+     * [FinalizedRecording] with segments is evidence that audio exists, so anything
+     * reasoning about "did we keep the audio" must consult that and not this.
+     *
+     * The property exists so that the distinction is checked in one place. Inferring
+     * preservation from a state is exactly the mistake that made a successful
+     * 12-second capture report itself as "could not start recording".
+     */
+    val evidencePreserved: Boolean get() = false
 }
 
 /** A committed, independently verifiable piece of a recording (SPEC §17). */

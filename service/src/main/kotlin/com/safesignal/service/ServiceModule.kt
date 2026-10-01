@@ -8,6 +8,7 @@ import com.safesignal.core.common.log.LogRecord
 import com.safesignal.core.common.log.LogSink
 import com.safesignal.core.common.log.RedactingLogger
 import com.safesignal.core.common.log.SafeLogger
+import com.safesignal.core.common.log.Severity
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -68,12 +69,20 @@ object ServiceModule {
  *
  * ### Severity
  *
- * `LogRecord` does not carry a level, because `SafeLogger` filters by level before
- * delegating. Everything therefore lands at `Log.i`, with failures at `Log.w`. That
- * is a real limitation: a caller cannot currently distinguish an informational
- * record from an error in logcat, only by message. Fixing it means adding the level
- * to `LogRecord`, which touches the core logging contract, so it is recorded in
- * KNOWN_LIMITATIONS.md rather than smuggled in here.
+ * The severity is mapped straight through, which required `LogRecord` to carry one.
+ * It previously did not, and this sink guessed from the presence of a throwable;
+ * see the note below.
+ */
+/**
+ * Writes [LogRecord]s to logcat at the priority the record actually carries.
+ *
+ * The severity is mapped straight through. An earlier version of this sink could not,
+ * because `LogRecord` had no severity field, and fell back to "INFO, or WARN if a
+ * throwable happened to be attached". That mislabelled deliberate `logger.e(...)`
+ * calls with no exception as `Log.i` — an error filed as information, which is
+ * invisible to anyone reading logcat by priority. It is worth recording that the fix
+ * was made in the core logging contract rather than patched in here, because a sink
+ * that guesses at severity cannot be relied on to report errors correctly.
  */
 class LogcatLogSink(
     private val maxFields: Int = 8,
@@ -91,10 +100,13 @@ class LogcatLogSink(
             }
         }
 
-        if (record.throwable != null) {
-            Log.w(record.tag, line, record.throwable)
-        } else {
-            Log.i(record.tag, line)
+        when (record.severity) {
+            Severity.DEBUG -> Log.d(record.tag, line)
+            Severity.INFO -> Log.i(record.tag, line)
+            // WARN and ERROR differ in priority, not just in the throwable. Errors
+            // that carry a stack trace go to `Log.e` so the trace is preserved.
+            Severity.WARN -> if (record.throwable != null) Log.w(record.tag, line, record.throwable) else Log.w(record.tag, line)
+            Severity.ERROR -> if (record.throwable != null) Log.e(record.tag, line, record.throwable) else Log.e(record.tag, line)
         }
     }
 }

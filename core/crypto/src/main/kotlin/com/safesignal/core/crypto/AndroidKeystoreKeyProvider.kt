@@ -1,5 +1,7 @@
 package com.safesignal.core.crypto
 
+import android.annotation.TargetApi
+import android.os.Build
 import android.security.keystore.StrongBoxUnavailableException
 import java.security.KeyFactory
 import java.security.KeyPair
@@ -274,11 +276,51 @@ private object KeyGenParameterSpecBuilderCompat {
  * second failure propagates too. The provider still fails closed rather than
  * degrading to an exportable software key.
  *
+ * ### Why the version check lives in its own function
+ *
+ * `StrongBoxUnavailableException` only exists from API 28, while `minSdk` is 26. On
+ * API 26–27 there is no StrongBox to request and no exception to catch, so the
+ * first attempt skips it entirely.
+ *
+ * Lint cannot see that: it reads `Build.VERSION.SDK_INT`, not a parameter, so a
+ * guard written against a local variable is not recognised and the catch clause is
+ * flagged `NewApi`. Rather than suppress the warning on a catch that genuinely
+ * cannot be reached below 28, the guard is hoisted into a function annotated
+ * `@RequiresApi(28)`. Lint then understands that the body only runs on 28+, which
+ * is true, and the reasoning is stated where it is checked rather than buried in an
+ * annotation.
+ *
+ * `sdkInt` is a parameter so the version branch is testable. It reads as 0 under
+ * `isReturnDefaultValues`, so a test calling the production form would take the
+ * pre-28 path every time and prove nothing about what ships. That mistake happened:
+ * adding the guard broke all four existing tests, which had been silently testing
+ * the version branch instead of the fallback.
+ *
  * @param attempt receives whether to demand StrongBox. It must build a fresh
  *   generator on each call, because a generator whose `generateKey` has thrown is
  *   not reusable.
  */
-internal inline fun <T> generateKeyWithStrongBoxFallback(attempt: (useStrongBox: Boolean) -> T): T =
+internal inline fun <T> generateKeyWithStrongBoxFallback(
+    sdkInt: Int = Build.VERSION.SDK_INT,
+    attempt: (useStrongBox: Boolean) -> T,
+): T =
+    if (sdkInt < Build.VERSION_CODES.P) {
+        // Pre-28: no dedicated secure element exists, so there is nothing to retry.
+        attempt(false)
+    } else {
+        attemptWithStrongBox(attempt)
+    }
+
+/**
+ * `android.annotation.TargetApi`, not `androidx.annotation.RequiresApi`.
+ *
+ * `:core:crypto` has no AndroidX dependency and adding one for a single marker
+ * would be a heavier change than the annotation is worth. `TargetApi` is the
+ * platform's own marker, is understood by lint, and asserts the same thing: this
+ * code only runs on 28 and above.
+ */
+@TargetApi(Build.VERSION_CODES.P)
+private inline fun <T> attemptWithStrongBox(attempt: (useStrongBox: Boolean) -> T): T =
     try {
         attempt(true)
     } catch (strongBoxUnavailable: StrongBoxUnavailableException) {

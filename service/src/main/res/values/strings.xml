@@ -36,13 +36,36 @@
     <string name="safesignal_service_notification_blocked">SafeSignal will not record while its
         notification is hidden. Allow notifications for SafeSignal, then try again.</string>
 
-    <string name="safesignal_service_start_failed">SafeSignal could not start recording. Any audio
-        already preserved is still on this device.</string>
+    <!--
+        Shown when the microphone could not be opened at all.
 
-    <string name="safesignal_test_complete">Test complete: %1$d sealed segment(s), %2$s. The audio is
-        encrypted and stored on this device.</string>
-    <string name="safesignal_test_no_audio">The test finished but captured no audio. Check that
-        nothing else is using the microphone.</string>
-    <string name="safesignal_test_failed">Test failed: %1$s</string>
+        Deliberately says what is still true rather than what went wrong: the user
+        needs to know whether anything is at risk, and an error string that leads
+        with a technical cause is not that.
+    -->
+    <string name="safesignal_service_start_failed">Could not start recording. Nothing was
+        captured, and nothing was lost.</string>
+
+    <!--
+        The test finished and produced audio.
+
+        Written for someone who has just been told an app recorded them. It states
+        how long they were recorded for, how much was kept, and — most importantly —
+        that the file is scrambled, so that "the audio is encrypted" is understood as
+        "it cannot be played or read by anyone, including this app's server", rather
+        than left as jargon.
+
+        "You were recorded" is not softened. The user is entitled to the plain fact.
+    -->
+    <string name="safesignal_test_complete">Test finished. You were recorded for %1$s and
+        %2$s of audio was saved. The microphone has been released. The recording is
+        scrambled, so it cannot be played or listened to by anyone, including
+        SafeSignal\'s server.</string>
+
+    <string name="safesignal_test_no_audio">The test finished but captured no audio. Nothing
+        was saved. Check that nothing else — a call, a voice recorder, another app —
+        was using the microphone.</string>
+    <string name="safesignal_test_failed">The test stopped early: %1$s. Any audio already
+        captured is still saved on this device.</string>
 
 </resources>

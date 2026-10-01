@@ -1,6 +1,20 @@
 package com.safesignal.core.common.log
 
 /**
+ * Severity of a log record.
+ *
+ * Declared here rather than nested in [RedactingLogger] because it is part of the
+ * record a sink receives. It used to be a private nested type used only to decide
+ * whether to emit at all, which meant the severity was discarded at the boundary:
+ * every sink saw a record with no level, and had to guess. On the logcat sink that
+ * guess was "INFO unless a throwable is attached", so a deliberate `logger.e(...)`
+ * with no exception was written as `Log.i` — an error filed as information, and
+ * invisible to anyone filtering logcat by priority. A file sink filtering for
+ * warnings would have lost them too.
+ */
+enum class Severity { DEBUG, INFO, WARN, ERROR }
+
+/**
  * A structured, secret-free log record.
  *
  * SafeSignal's logging rules (SPEC §55, SECURITY.md § Logging) are enforced
@@ -14,6 +28,7 @@ data class LogRecord(
     val message: String,
     val throwable: Throwable? = null,
     val fields: Map<String, String> = emptyMap(),
+    val severity: Severity = Severity.INFO,
 )
 
 interface LogSink {
@@ -94,27 +109,26 @@ object Redactor {
 class RedactingLogger(
     private val tag: String,
     private val sink: LogSink,
-    private val minLevel: Level = Level.DEBUG,
+    private val minLevel: Severity = Severity.DEBUG,
 ) : SafeLogger {
 
-    enum class Level { DEBUG, INFO, WARN, ERROR }
-
     override fun d(message: String, fields: Map<String, String>) =
-        emit(Level.DEBUG, LogRecord(tag, message, fields = fields))
+        emit(Severity.DEBUG, LogRecord(tag, message, fields = fields))
 
     override fun i(message: String, fields: Map<String, String>) =
-        emit(Level.INFO, LogRecord(tag, message, fields = fields))
+        emit(Severity.INFO, LogRecord(tag, message, fields = fields))
 
     override fun w(message: String, throwable: Throwable?, fields: Map<String, String>) =
-        emit(Level.WARN, LogRecord(tag, message, throwable, fields))
+        emit(Severity.WARN, LogRecord(tag, message, throwable, fields))
 
     override fun e(message: String, throwable: Throwable?, fields: Map<String, String>) =
-        emit(Level.ERROR, LogRecord(tag, message, throwable, fields))
+        emit(Severity.ERROR, LogRecord(tag, message, throwable, fields))
 
-    private fun emit(level: Level, record: LogRecord) {
-        if (level.ordinal < minLevel.ordinal) return
+    private fun emit(severity: Severity, record: LogRecord) {
+        if (severity.ordinal < minLevel.ordinal) return
         sink.write(
             record.copy(
+                severity = severity,
                 message = Redactor.message(record.message),
                 fields = Redactor.fields(record.fields),
                 // Exception messages can echo request bodies; keep type + stack,

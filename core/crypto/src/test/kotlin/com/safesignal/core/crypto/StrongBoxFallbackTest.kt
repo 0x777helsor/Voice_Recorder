@@ -23,11 +23,21 @@ import org.junit.Test
  */
 class StrongBoxFallbackTest {
 
+    /**
+     * A device new enough to have StrongBox.
+     *
+     * Passed explicitly because `Build.VERSION.SDK_INT` reads as 0 in JVM unit tests
+     * (`isReturnDefaultValues`), which would silently route every test down the
+     * pre-28 branch and leave the fallback untested.
+     */
+    private val API_28_OR_LATER = 28
+
+
     @Test
     fun `strongbox is requested first`() {
         val attempts = mutableListOf<Boolean>()
 
-        val result = generateKeyWithStrongBoxFallback { useStrongBox ->
+        val result = generateKeyWithStrongBoxFallback(sdkInt = API_28_OR_LATER) { useStrongBox ->
             attempts += useStrongBox
             "key"
         }
@@ -40,7 +50,7 @@ class StrongBoxFallbackTest {
     fun `an unavailable strongbox is retried without it`() {
         val attempts = mutableListOf<Boolean>()
 
-        val result = generateKeyWithStrongBoxFallback { useStrongBox ->
+        val result = generateKeyWithStrongBoxFallback(sdkInt = API_28_OR_LATER) { useStrongBox ->
             attempts += useStrongBox
             if (useStrongBox) throw StrongBoxUnavailableException("Failed to generate key")
             "software-backed key"
@@ -56,7 +66,7 @@ class StrongBoxFallbackTest {
         val failure = IllegalStateException("keystore is broken")
 
         val thrown = runCatching {
-            generateKeyWithStrongBoxFallback<Unit> { useStrongBox ->
+            generateKeyWithStrongBoxFallback<Unit>(sdkInt = API_28_OR_LATER) { useStrongBox ->
                 attempts += useStrongBox
                 throw failure
             }
@@ -71,7 +81,7 @@ class StrongBoxFallbackTest {
         val attempts = mutableListOf<Boolean>()
 
         val thrown = runCatching {
-            generateKeyWithStrongBoxFallback<Unit> { useStrongBox ->
+            generateKeyWithStrongBoxFallback<Unit>(sdkInt = API_28_OR_LATER) { useStrongBox ->
                 attempts += useStrongBox
                 throw if (useStrongBox) {
                     StrongBoxUnavailableException("Failed to generate key")
@@ -84,6 +94,35 @@ class StrongBoxFallbackTest {
         assertEquals(listOf(true, false), attempts)
         assertEquals("still broken", thrown?.message)
         assertEquals(IllegalStateException::class.java, thrown?.javaClass)
+    }
+
+    @Test
+    fun `below api 28 strongbox is never requested`() {
+        // `StrongBoxUnavailableException` does not exist before API 28, so neither
+        // does the ability to ask for one. The test run that added this guard
+        // failed all four tests above for exactly this reason: the version check
+        // read SDK_INT as 0 and short-circuited. Pinning the branch keeps both
+        // paths honest.
+        val attempts = mutableListOf<Boolean>()
+
+        val result = generateKeyWithStrongBoxFallback(sdkInt = 26) { useStrongBox ->
+            attempts += useStrongBox
+            "key"
+        }
+
+        assertEquals(listOf(false), attempts)
+        assertEquals("key", result)
+    }
+
+    @Test
+    fun `below api 28 a keystore failure surfaces rather than being swallowed`() {
+        val failure = IllegalStateException("keystore is broken")
+
+        val thrown = runCatching {
+            generateKeyWithStrongBoxFallback<Unit>(sdkInt = 26) { throw failure }
+        }.exceptionOrNull()
+
+        assertSame(failure, thrown)
     }
 
     // The correctness of the two distinct KeyGenParameterSpecs — an AES key with

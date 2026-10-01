@@ -6,28 +6,70 @@ whether to rely on SafeSignal, and by whoever picks this up next.
 
 ---
 
-## 1. Nothing here has run on a device
+## 1. Android 14+ is entirely unverified
 
 **Status: blocking for any real-world claim.**
 
-Every line of code in this repository has been compiled and unit-tested on a JVM
-with a headless Android SDK. **No test has been run on a physical device or
-emulator.** There is no emulator in the development environment, and there is no
-hardware whose microphone, Keystore, audio routing and power-management behaviour
-could be exercised.
+This section used to say nothing had ever run on hardware. That stopped being true,
+and the correction matters: **three real bugs** were found by running on phones that
+no unit test could reach, because every unit test uses a fake `KeyProvider` or a fake
+`AudioSource`. A passing suite here means very little about the platform.
 
-Consequently, none of the following has been verified:
+What has now been verified on two physical phones — a Galaxy A51 (API 33, Exynos) and
+a Tecno BF7 (API 31, MediaTek):
 
-- that audio is actually captured at the requested sample rate and channel count
-  on a real device;
-- that the Android Keystore behaves as documented on a specific OEM's secure
-  element, or that StrongBox is present;
+- microphone capture at 48 kHz mono, producing correctly sized sealed segments;
+- AES-256-GCM segment encryption, with the expected 80-byte per-file overhead;
+- Keystore key generation, with and without StrongBox present;
+- foreground service start, notification visibility, and microphone release on stop.
+
+What has **not** been verified, and remains the largest gap in the project:
+
+- **any Android 14, 15 or 16 device.** `targetSdk` is 36; the available hardware is
+  API 33 and API 31, and the emulator image is API 34. Android 14 made
+  `foregroundServiceType` mandatory and introduced
+  `ForegroundServiceStartNotAllowedException` for microphone services started from
+  the background. SafeSignal's *entire* recording model depends on starting a
+  microphone foreground service, so this is precisely the behaviour that most needs
+  checking and it has not been checked on real hardware.
 - that the foreground service survives screen-off, lock screen, and process death
   the way the design assumes;
 - that a phone call, another app's microphone use, or a Bluetooth route change is
   detected correctly;
 - that microphone contention produces the errors the code expects;
-- battery consumption, thermal behaviour, or wake-word detection rates on hardware.
+- battery consumption, thermal behaviour, or wake-word detection rates.
+
+### 1.1 Six bugs found on hardware, none of which a unit test could reach
+
+Recorded here because the ratio is the point: every one of these needed a real
+phone, and all of them passed 100% of the test suite.
+
+| Bug | Symptom | Why tests missed it |
+| --- | --- | --- |
+| `setIsStrongBoxBacked` treated as a hint | **No key created at all** on either test phone; encryption impossible | Every test uses a fake `KeyProvider` |
+| `PrivateKey.getEncoded()` | Threw NPE; would have published an **empty** verification key in every evidence package | Same |
+| EC signing key built with cipher parameters | Invalid for sign/verify | Same |
+| `AudioRecord.read(ByteBuffer, …)` | `ERROR_BAD_VALUE` on every frame; **recorded nothing** | Every test uses a fake `AudioSource` |
+| `AudioRecord` buffer sized only from `getMinBufferSize` | Reads rejected outright where the minimum is smaller than one pump frame | Hidden by the A51, which reported a larger minimum |
+| Dead pump left the engine in `Recording` | A live "recording" notification over a silent microphone — the false reassurance this app exists to prevent | No test ends a pump mid-recording |
+
+Two further defects were found by running the finished UI, and are the reason this
+section exists in this form:
+
+- **A successful recording reported a failure.** The engine finalizes itself when
+  capture ends, so the service's subsequent `stop()` found nothing in progress and
+  returned a failure. The user was told "SafeSignal could not start recording"
+  seconds after a clean 12-second capture had been sealed. Real evidence, described
+  to its owner as a failure.
+- **The summary notification was destroyed on creation.** `finish()` posted the
+  summary and then called `cancelAll()` in the same breath. The only durable record
+  that the microphone had been used lasted about a second.
+
+The lesson is not "add more tests" — it is that a test double cannot tell you the
+platform behaves as you assumed, and a green suite is not evidence about hardware.
+Documentation asserting unimplemented graceful degradation made the first of these
+worse: it described behaviour that did not exist, and the description was what
+convinced everyone the code was fine.
 
 Nothing in this repository should be described as "production ready", and the
 project does not make that claim.
@@ -152,9 +194,18 @@ discipline explicit.
   (most recent audio is the useful part, and a partial frame would misalign the
   container) and it is asserted by a test, but it is a judgement call rather than a
   requirement.
-- `AndroidKeystoreKeyProvider.wrapKey` asks for StrongBox through a `runCatching`
-  hint. On devices without it the request is ignored and the key lands in the
-  software-backed keystore. SafeSignal does not report which happened to the user.
+- `AndroidKeystoreKeyProvider.wrapKey` asks for StrongBox, which is a hard
+  requirement rather than a hint: `generateKey` throws `StrongBoxUnavailableException`
+  and creates no key. An earlier version described the request as an ignorable hint
+  and claimed the key "lands in the software-backed keystore" when it did not — in
+  practice no key was created at all and encryption was impossible on devices
+  without StrongBox. The retry without StrongBox is narrow on purpose: it catches
+  that one exception and never disables secure hardware. This is described
+  correctly in [SECURITY.md](SECURITY.md) §2.
+- `PrivateKey.getEncoded()` returns `null` for Android Keystore keys, because they
+  are non-exportable by design. Code that needs a verification key must read it from
+  `getCertificate().getPublicKey()`. This was handled incorrectly once and would
+  have shipped an empty public key inside every evidence package.
 - `Identifiers.recordingId()` is a 128-bit CSPRNG hex string rather than a UUID.
   This is deliberate — opaque, timestamp-free — but it differs from the usual
   convention and is worth knowing if a future component expects UUID formatting.

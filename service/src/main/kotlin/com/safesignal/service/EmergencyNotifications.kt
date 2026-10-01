@@ -1,14 +1,17 @@
 package com.safesignal.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.safesignal.audio.capture.RecordingState
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -38,12 +41,34 @@ class EmergencyNotifications @Inject constructor(
     /**
      * Whether a notification can actually be seen by the user.
      *
-     * True is required before the microphone is opened. This checks the
-     * app-wide notification setting rather than the permission alone, because the
-     * user can also disable notifications in Settings without revoking anything.
+     * True is required before the microphone is opened. Two things must both hold,
+     * and neither implies the other:
+     *
+     *  - the app-wide notification setting, which the user can turn off in Settings
+     *    without revoking any permission;
+     *  - the `POST_NOTIFICATIONS` runtime permission, which exists only from API 33.
+     *
+     * Checking the setting alone is the bug Android 13 made easy: a user who denied
+     * `POST_NOTIFICATIONS` still reads as "enabled", so readiness showed a green
+     * tick on a device where posting is impossible. That is a false assurance about
+     * the one indicator this app must never get wrong.
      */
     fun notificationsVisible(): Boolean =
-        NotificationManagerCompat.from(context).areNotificationsEnabled()
+        NotificationManagerCompat.from(context).areNotificationsEnabled() && mayPost()
+
+    /**
+     * Whether `POST_NOTIFICATIONS` is held.
+     *
+     * Kept separate because lint's `MissingPermission` check does not follow the
+     * guard through a helper, and unsatisfying it here is a crash rather than a
+     * cosmetic problem.
+     */
+    private fun mayPost(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
 
     /**
      * Creates the notification channels.
@@ -111,7 +136,12 @@ class EmergencyNotifications @Inject constructor(
 
     /** Reposts the ongoing notification, e.g. after a state change. */
     fun postOngoing(state: RecordingState) {
-        if (!notificationsVisible()) return
+        // The permission check is written out inline rather than delegated to
+        // [mayPost]: lint's MissingPermission analysis only recognises a guard it can
+        // see on the path to the call, and `notify` throws SecurityException rather
+        // than degrading if the guard is wrong.
+        if (!mayPost()) return
+        @Suppress("MissingPermission") // Guarded immediately above.
         NotificationManagerCompat.from(context).notify(ONGOING_ID, ongoing(state))
     }
 
@@ -123,7 +153,7 @@ class EmergencyNotifications @Inject constructor(
      * not.
      */
     fun postSummary(text: String) {
-        if (!notificationsVisible()) return
+        if (!mayPost()) return
         val notification = NotificationCompat.Builder(context, CHANNEL_RECORDING)
             .setSmallIcon(R.drawable.ic_stat_safesignal)
             .setContentTitle(context.getString(R.string.safesignal_notification_summary_title))
@@ -134,11 +164,30 @@ class EmergencyNotifications @Inject constructor(
             .setAutoCancel(true)
             .setContentIntent(openAppIntent())
             .build()
+        @Suppress("MissingPermission") // Guarded by mayPost() at the top.
         NotificationManagerCompat.from(context).notify(SUMMARY_ID, notification)
     }
 
-    fun cancelAll() {
+    /**
+     * Removes the ongoing "recording" notification, leaving any summary in place.
+     *
+     * These are separate methods on purpose. `cancelAll` used to cancel both ids,
+     * and the service called it immediately after posting the summary — so the
+     * summary was destroyed in the same breath it was created, and the persistent
+     * record that a microphone had been used lasted about a second. The only thing
+     * left telling the user was a Toast, which vanishes on its own and is missed
+     * entirely if the app is in the background.
+     *
+     * Cancelling the summary is still correct when a *new* session starts: the old
+     * summary has been seen by then, and leaving several to accumulate would be
+     * noise. That is what [cancelSummary] is for.
+     */
+    fun cancelOngoing() {
         NotificationManagerCompat.from(context).cancel(ONGOING_ID)
+    }
+
+    /** Dismisses a previous session's summary. */
+    fun cancelSummary() {
         NotificationManagerCompat.from(context).cancel(SUMMARY_ID)
     }
 

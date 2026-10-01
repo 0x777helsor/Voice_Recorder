@@ -107,10 +107,13 @@ restrictions are to be accommodated with a user-visible path, never circumvented
 
 | Behaviour | Verified? |
 | --- | --- |
-| Microphone capture at configured rate/channels | **No** — no device |
-| Keystore wrapping, StrongBox presence | **No** |
+| Microphone capture at configured rate/channels | **Yes** — 48 kHz mono, 12 s, 3 segments, Tecno BF7 (API 31) |
+| Keystore wrapping, StrongBox presence | **Yes** — both test phones lack StrongBox; fallback exercised |
+| Foreground service starts and releases the microphone | **Yes** — both test phones |
+| Notification visibility and stop action | **Yes** — `isForeground=true`, channel present, `vis=PUBLIC`, one action |
 | Foreground service survives screen-off / lock | **No** |
-| Notification visibility and stop action | **No** |
+| Android 14+ `foregroundServiceType` enforcement | **No** — no API 34+ hardware |
+| Background-started microphone FGS refusal | **No** — no API 34+ hardware |
 | Microphone contention detection (calls, other apps) | **No** |
 | Audio focus and Bluetooth routing changes | **No** |
 | Battery and thermal behaviour | **No** |

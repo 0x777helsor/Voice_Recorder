@@ -18,43 +18,92 @@ microphone indicators, and does not record without you having armed it first.
 ## Current status — read this before anything else
 
 This repository contains **Phase 1** of the specification: the local vertical
-slice. Honest statement of what is and is not finished:
+slice, plus the first three phases of the recording path. Honest statement of what
+is and is not finished:
 
 | Area | State |
 | --- | --- |
 | Gradle build, module graph, lint configuration | Building clean |
-| `core:common` — state machine, activation gate, logging, clocks, JSON | Implemented, unit-tested |
-| `core:crypto` — AES-256-GCM envelope, Keystore KEK, SHA-256 manifest, ECDSA signing | Implemented, tamper-tested |
-| `core:database` — Room schema, DAOs, transactional segment commit | Implemented |
+| `core:common` — state machine, activation gate, logging, clocks, JSON, readiness, permissions | Implemented, unit-tested |
+| `core:crypto` — AES-256-GCM envelope, Keystore KEK, SHA-256 manifest, ECDSA signing | Implemented, tamper-tested, keystore verified on device |
+| `core:database` — Room schema, DAOs, transactional segment commit | Implemented; **not yet written to at `stop()`** |
 | `audio:processing` — rolling pre-buffer, WAV segment writer, quality monitor | Implemented, unit-tested |
-| `audio:capture` — `AudioRecord` source, frame pump, segmented engine | Implemented |
+| `audio:capture` — `AudioRecord` source, frame pump, segmented engine | Implemented; capture verified on two physical devices |
 | `data:local` — segmented encrypted writer, startup reconciler | Implemented, crash-recovery tested |
+| `service` — foreground service, notification, recording controller | Implemented, verified on device |
 | `app` — DI graph, manifest, readiness screen, launcher icon | Builds; minimal UI only |
-| Foreground service, notification, full UI, wake-word tuning | **Not implemented** |
-| Physical triggers, sync client, backend, evidence export | **Not implemented** |
+| `backend` — manifest/digest receipt store, capability queries | Implemented, 83 tests. **No Android client calls it yet** |
+| Wake-word detection, full UI, triggers, sync client, evidence export | **Not implemented** |
+
+### What is verified on real hardware
+
+Two physical phones were used, chosen because they differ in ways that matter:
+a Samsung Galaxy A51 (API 33, Exynos, `ro.hardware.keystore=mdfpp`, no usable
+StrongBox) and a Tecno BF7 (API 31, MediaTek, no StrongBox at all). The second
+phone is what exposed the capture bugs the first one hid — see
+[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) §1.
+
+| Behaviour | Verified how |
+| --- | --- |
+| Microphone capture, 48 kHz mono | Tecno BF7: 12 s from one tap, three segments sealed at 480,000 / 480,000 / 192,000 bytes plaintext |
+| AES-256-GCM encryption of segments | Same run; 80 bytes of overhead per file = 12-byte IV + 16-byte GCM tag |
+| Keystore key generation | Both phones, with and without StrongBox present |
+| ECDSA signing public key non-null | Both phones; this was a real bug (see below) |
+| Foreground service starts, notification visible | `dumpsys activity services`: `isForeground=true`, channel `safesignal.recording.v1`, `vis=PUBLIC`, one Stop action |
+| Service releases the microphone on stop | Confirmed by `dumpsys activity services` returning no SafeSignal service |
+
+**Three bugs were found only by running on hardware**, none of which any unit test
+could reach because every one of them used a fake `KeyProvider` or a fake
+`AudioSource`: StrongBox being a hard requirement rather than a hint (which meant
+*no key was created at all*), `PrivateKey.getEncoded()` returning `null` (which
+would have published an empty verification key inside every evidence package), and
+the deprecated `AudioRecord.read(ByteBuffer, …)` overload being outright broken on
+one ROM. The lesson is recorded in the commit messages rather than smoothed over.
+
+### What is **not** verified
+
+- **Any Android 14/15/16 device.** `targetSdk` is 36; the devices available are API
+  33 and API 31. Android 14's mandatory `foregroundServiceType` enforcement and
+  `ForegroundServiceStartNotAllowedException` for background-started microphone
+  services are unvalidated on real hardware. This is the largest gap.
+- Screen-off and lock-screen survival of the foreground service.
+- Microphone contention: phone calls, other apps, Bluetooth route changes.
+- Wake word, triggers, sync, export, and the manifest seal→store→verify round trip.
+- Six of fifteen Gradle modules are still empty stubs.
 
 ### Verification performed
 
 ```text
-./gradlew test           BUILD SUCCESSFUL   150 tests, 0 failures
-./gradlew lint           BUILD SUCCESSFUL   abortOnError = true
-./gradlew assembleDebug  BUILD SUCCESSFUL   app-debug.apk (20 MB)
+./gradlew test            BUILD SUCCESSFUL   158 Android tests, 0 failures
+./gradlew lint            BUILD SUCCESSFUL   abortOnError = true
+cd backend && npm test    93 passing, 0 failing
+cd backend && npx tsc --noEmit   clean
+./gradlew assembleDebug   BUILD SUCCESSFUL   app-debug.apk
 ```
 
-**Nothing has been run on a physical device or emulator.** There is no emulator in
-the development environment, so there is no instrumentation coverage and no
-hardware verification of the microphone, Keystore, foreground-service or power
-behaviour. See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), which is deliberately
-blunt about this.
+Counts are deduplicated across build variants. `./gradlew test` runs both `debug`
+and `release` unit-test variants, and every test appears in both, so naively summing
+the XML result files reports roughly double the real number — an earlier version of
+this file claimed 150 where the true figure was 140.
 
 Test counts by module:
 
 | Module | Tests |
 | --- | --- |
-| `core:common` | 52 |
-| `data:local` | 42 |
-| `core:crypto` | 30 |
-| `audio:processing` | 26 |
+| `core:common` | 57 |
+| `audio:capture` | 26 |
+| `data:local` | 21 |
+| `core:crypto` | 21 |
+| `audio:processing` | 13 |
+| `service` | 20 |
+| **Android total** | **158** |
+| `backend` | 93 |
+
+Two tests in the list above deserve a caveat. The four `StrongBoxFallbackTest` cases
+assert on the *fallback decision*, not on the resulting key, because
+`KeyGenParameterSpec` getters return `null` under `isReturnDefaultValues`, making
+JVM assertions on the spec meaningless. The keystore itself was verified on device
+instead. The same applies to every assertion about `AudioRecord` configuration.
 
 ---
 
@@ -181,7 +230,7 @@ audio/processing pre-buffer, WAV writer, quality monitor
 data/local       segmented encrypted store, startup reconciler
 data/remote      sync boundary (not yet implemented)
 data/repository  orchestration, sync worker (not yet implemented)
-service          foreground service (not yet implemented)
+service          foreground service, notification, recording controller
 feature/*        Compose UI (not yet implemented)
 app              DI graph, manifest, minimal readiness screen
 ```
@@ -198,7 +247,8 @@ app              DI graph, manifest, minimal readiness screen
 | [PRIVACY.md](PRIVACY.md) | What is collected, when, and what is never collected |
 | [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) | What is unverified, incomplete or worse than advertised |
 | [QA_CHECKLIST.md](QA_CHECKLIST.md) | Manual test matrices, including the wake-word honesty matrix |
-| [API.md](API.md) | Backend design contract (not yet implemented) |
+| [API.md](API.md) | Backend design contract, and how the server is hardened |
+| [OPENAPI.yaml](OPENAPI.yaml) | Machine-readable contract, held to the running service by tests |
 | [LEGAL_DISCLAIMER.md](LEGAL_DISCLAIMER.md) | Recording-law and admissibility caveats |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Release build, signing, release checklist |
 | [ANDROID_COMPATIBILITY_MATRIX.md](ANDROID_COMPATIBILITY_MATRIX.md) | Per-API-level behaviour |

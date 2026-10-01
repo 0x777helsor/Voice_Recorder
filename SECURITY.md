@@ -84,8 +84,30 @@ that cannot be authenticated is quarantined, never presented as audio.
 | --- | --- | --- |
 | `setUserAuthenticationRequired` | `false` | A recording must be sealable without a prompt at activation time |
 | `setUnlockedDeviceRequired` | `true` on API 28+ | Evidence at rest is unavailable while the device is locked |
-| `setIsStrongBoxBacked` | hint, best-effort | Use a dedicated secure element where present |
+| `setIsStrongBoxBacked` | `true`, with a **narrow** retry without it | Use a dedicated secure element; on failure fall back to TEE, never to software |
 | `setRandomizedEncryptionRequired` | `true` | Refuse deterministic encryption |
+
+**`setIsStrongBoxBacked` is a requirement, not a hint.** This was wrong in an earlier
+version of this document and the code followed the document. `KeyGenParameterSpec`
+does not throw when the flag is set; `generateKey()` throws
+`StrongBoxUnavailableException` *later*, having created no key at all. An earlier
+implementation treated the request as a hint and "degraded gracefully", which in
+practice meant the app was unable to encrypt anything on any device without a
+StrongBox — including the Galaxy A51 and the Tecno BF7 used for testing, neither of
+which has one.
+
+`generateKeyWithStrongBoxFallback` therefore attempts StrongBox once and retries
+exactly once without it. The fallback is deliberately narrow:
+
+- it catches `StrongBoxUnavailableException` only, so any other keystore failure
+  still propagates rather than being silently retried;
+- it retries without StrongBox, **never** with `setIsSecureHardware` disabled, so
+  the key never becomes software-backed.
+
+**There is no general degradation path to software keys.** Failing closed is the
+correct behaviour when the key material protects evidence: a recording that cannot
+be encrypted is not a recording, and a recording that appears preserved but is not
+encrypted is worse than an honest failure.
 
 **The `false` on user authentication is a deliberate trade-off**, not an oversight.
 Requiring a biometric or credential prompt would mean a recording could start but
@@ -248,16 +270,30 @@ against a built, running application.
 - [x] Segment relocation fails closed (unit-tested)
 - [x] Manifest tampering invalidates the signature (unit-tested)
 - [x] AAD field boundaries are unambiguous (unit-tested)
-- [ ] No plaintext key, nonce or transcript reaches any sink (needs the
-      end-to-end log capture test)
+- [x] No plaintext key, nonce or transcript reaches any sink (the redactor is
+      unit-tested as a property over every sink, including the no-throwable error
+      path)
+- [x] Keystore key generation and the ECDSA verification key are non-null on real
+      hardware (verified on two devices; both lacked StrongBox, so the fallback path
+      was exercised)
 - [ ] Key rotation is exercised against a populated database
+- [ ] Ciphertext is decrypted and played back end-to-end on a device, and the audio
+      is confirmed intelligible — segments have been *sealed* on device but never
+      *opened* there
 
 **Privacy**
 - [ ] No audio is persisted before activation unless pre-roll is explicitly enabled
 - [ ] Pre-roll is bounded and RAM-only in a memory trace
 - [ ] No analytics transmit recording identifiers
-- [ ] Screenshots and recents previews behave as documented
-- [ ] Notifications leak no recording content
+- [ ] Screenshots and recents previews behave as documented (T12; not implemented)
+- [x] Notifications leak no recording content — the notification carries only a
+      title, a channel id and a Stop action; no recording id, no filename, no
+      derived text (verified on device via `dumpsys notification`)
+- [x] The service refuses to hold the microphone when its notification would not be
+      visible. On API 33+ the platform will run a microphone FGS with the
+      notification suppressed; SafeSignal declines, because recording someone who
+      cannot see that it is happening is the behaviour that would make this app a
+      liability rather than a protection
 
 **Storage and recovery**
 - [x] Committed segments survive process death (unit-tested)

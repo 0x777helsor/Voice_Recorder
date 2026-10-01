@@ -186,7 +186,8 @@ ciphertext that the user could never decrypt and might believe was lost.
 offers a stop action; it contains no recording content. Screenshot and
 recents-preview blocking is planned as a user setting.
 
-**Status:** not yet implemented.
+**Status:** not implemented. The notification half of this mitigation *is* done and
+verified on device; screenshot and recents-preview blocking is not.
 
 ### T13 — Supply-chain (A7)
 

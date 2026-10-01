@@ -1,12 +1,20 @@
 # API and Backend
 
-**Status: not implemented.** This document is the design contract for Phase 6–7 of
-the specification. No backend code, no OpenAPI document and no upload client exist
-in this repository yet.
+**Status: server implemented and tested; no Android client yet.** The backend in
+[`backend/`](backend/) is complete — 93 tests, including 11 that hold
+[OPENAPI.yaml](OPENAPI.yaml) to what the server actually does. **No Android code
+calls it**: `data:remote` and `data:repository` are still empty modules, so the sync
+path is designed and specified but not wired. An evidence product that silently
+failed to sync would be worse than one that plainly had not been built yet, so the
+distinction is kept sharp here.
 
-It is written now because the Android client's design is constrained by the server
-contract, and the server contract is where most of the security properties live.
-Building the client first against an unstated contract would mean reworking it.
+The contract is described below and written out machine-readably in
+[OPENAPI.yaml](OPENAPI.yaml), which is what a client integrator should read.
+
+It was written before the client because the Android client's design is constrained
+by the server contract, and the server contract is where most of the security
+properties live. Building the client first against an unstated contract would mean
+reworking it.
 
 ---
 
@@ -208,21 +216,49 @@ worker cannot hold the microphone, and pretending otherwise would produce a
 
 ## 10. OpenAPI
 
-`OPENAPI.yaml` has not been written yet. It should be generated from, or written
-alongside, an implementation rather than specified in advance and left to drift.
-When it is written it must cover:
+[OPENAPI.yaml](OPENAPI.yaml) exists: OpenAPI 3.1, all 14 routes, validated against
+the 3.1 schema with `openapi-spec-validator`.
 
-- the endpoints above;
-- the error model (a consistent problem-details shape);
-- authentication schemes;
-- idempotency headers on every mutating upload operation;
-- pagination on `GET /recordings`.
+It is written alongside the implementation and **held to it by tests**, because a
+specification left to drift is worse than none — a client integrator would read it
+as a description of the service rather than of a plan for one. `backend/test/openapi.test.ts`
+fails when:
+
+- a route exists in code but not in the document;
+- the document describes a route that is not registered;
+- any `$ref` does not resolve;
+- any property key anywhere in the document could hold audio (`decodedAudioWav`,
+  `pcmSamples`, `transcript` and the like);
+- the document stops stating that the server cannot verify the GCM tag or the
+  plaintext digest, or that audio never transits the API;
+- the running service's `/v1/capabilities` reports a capability the contract says
+  is structurally impossible.
+
+Both the last two directions matter. The tests fail if the *server* starts claiming
+more than it can do, as well as if the *document* stops warning about it. Each was
+verified to fail when the guarantee was deliberately broken, since a test that has
+never been seen to fail is not evidence of anything.
+
+Two things the document deliberately does **not** do:
+
+- **No `problem+json`.** The error envelope is `{ error: { code, message, details? } }`
+  with a closed `code` enum, which is what the implementation uses. Describing a
+  media type the server does not emit would be a small lie in a document whose
+  whole purpose is accuracy.
+- **No pagination.** `GET /v1/recordings` returns everything for the authenticated
+  user. That is fine at this stage and would need addressing before any account
+  accumulated enough recordings to matter; it is recorded as a limitation rather
+  than specified and not built.
 
 ---
 
 ## 11. Deployment
 
-No backend exists, so there is nothing to deploy. When one does:
+The backend exists and runs, but **it has never been deployed anywhere.** It uses
+in-memory repositories by default and there is no production database driver,
+object-store adapter, or deployment manifest in this repository. Treat everything
+below as requirements the code satisfies in development and has not been shown to
+satisfy in production.
 
 - run behind TLS termination with HSTS;
 - keep object storage private with no public read path;

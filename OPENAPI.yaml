@@ -1,0 +1,925 @@
+openapi: 3.1.0
+
+info:
+  title: SafeSignal evidence-receiving service
+  version: "0.1.0"
+  summary: Stores sealed evidence it cannot decrypt, and issues receipts about receipt.
+  description: |
+    ## What this service is
+
+    SafeSignal's client records audio, encrypts each segment on the device with
+    AES-256-GCM, and uploads **ciphertext**. This API receives that ciphertext,
+    checks its size and its sealed-byte hash, and issues a receipt recording what
+    arrived.
+
+    ## What this service is not
+
+    It is not a transcription service, not a playback service, and not a
+    certificate authority for audio. There is **no endpoint anywhere in this API
+    that accepts or returns audio plaintext**, by construction rather than by policy:
+    no type in the server's domain model has a field capable of holding one.
+
+    ## Two claims this API refuses to make
+
+    These are stated here because a consumer of the receipts is exactly the person
+    who would otherwise assume them:
+
+    1. **`plaintextSha256AssertedByClient` is never verified by the server.**
+       Computing a digest of the plaintext requires the plaintext. The field is
+       stored so a client-side verifier can check it later, and it is named
+       awkwardly on purpose so that the name travels with it.
+
+    2. **The AES-GCM authentication tag is not verified by the server.** It is
+       sealed inside the ciphertext. `serverVerifiesGcmTag` is `false` in
+       `/v1/capabilities`, and every receipt repeats the limitation.
+
+    A receipt proves that *an encrypted, checksummed set of segments arrived*. It is
+    not proof of authenticity, not proof of when or where audio was recorded, and
+    not an assurance of admissibility. Admissibility is decided by the relevant
+    authority or court.
+
+    ## Authentication
+
+    Bearer JWTs. Access tokens are short-lived (15 minutes). Refreshing requires
+    **both** the refresh token and the account password, so a stolen refresh token
+    alone does not grant unattended access, and changing the password revokes every
+    outstanding token.
+
+    ## Notable error semantics
+
+    - **Cross-tenant access returns 404, never 403.** A 403 confirms the resource
+      exists, which is a user-enumeration oracle.
+    - **Failed login returns byte-identical 401 responses** for "no such user" and
+      "wrong password", with no password hash computed on the unknown-user path, so
+      neither the body nor the timing distinguishes them.
+    - **`Idempotency-Key` is required** on chunk commit, and is checked *before* a
+      presigned URL is minted, so a replay cannot be used to mint upload grants.
+
+  license:
+    name: UNLICENSED
+    identifier: UNLICENSED
+
+servers:
+  - url: http://localhost:8080
+    description: Local development. Never expose this over plaintext HTTP.
+  - url: https://{host}
+    description: Production deployment. TLS terminated at the edge.
+    variables:
+      host:
+        default: evidence.example.invalid
+        description: Deploy-specific hostname.
+
+tags:
+  - name: auth
+    description: Accounts and tokens.
+  - name: recordings
+    description: The four-step evidence upload lifecycle.
+  - name: receipts
+    description: Immutable audit records, chained per user.
+  - name: meta
+    description: Health and capability disclosure.
+
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      summary: Liveness probe.
+      description: |
+        Returns `ok` as long as the process is running. Deliberately does **not**
+        touch the database or object store, so a dependency outage does not cause an
+        orchestrator to kill an otherwise-healthy process.
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, uptimeSeconds]
+                properties:
+                  status: { type: string, const: ok }
+                  uptimeSeconds: { type: integer, minimum: 0 }
+
+  /readyz:
+    get:
+      tags: [meta]
+      summary: Readiness probe.
+      description: Checks that the database and object store are actually usable.
+      security: []
+      responses:
+        "200":
+          description: Dependencies are reachable; the service can serve traffic.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+        "503":
+          description: A dependency is unreachable; do not route traffic here.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+
+  /v1/capabilities:
+    get:
+      tags: [meta]
+      summary: What this service can and cannot do.
+      description: |
+        The honest description of the server's verification abilities, intended to be
+        fetched and displayed by the client so that a user is never told, or allowed
+        to believe, that their evidence has been authenticated by a third party.
+
+        `serverHoldsDecryptionKey` is always `false`. `serverVerifiesGcmTag` and
+        `serverVerifiesPlaintext` are always `false`. `serverVerifiesSealedSha256`
+        is the only verification capability that is configuration-dependent: when
+        true, stored bytes are re-hashed and compared before a receipt is issued.
+      security: []
+      responses:
+        "200":
+          description: Capability disclosure.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Capabilities" }
+
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      summary: Create an account.
+      description: |
+        Returns 403 with `FORBIDDEN` when `registrationEnabled` is false. Production
+        deployments are expected to run with registration closed.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password:
+                  type: string
+                  minLength: 12
+                  description: Stored with scrypt and a per-user random salt. Never logged.
+      responses:
+        "201":
+          $ref: "#/components/responses/TokenPair"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange credentials for tokens.
+      description: |
+        Returns a **byte-identical** 401 for an unknown email and a wrong password,
+        and computes no password hash on the unknown-email path. Neither the response
+        body nor the response timing distinguishes the two cases.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/TokenPair"
+        "401": { $ref: "#/components/responses/InvalidCredentials" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Exchange a refresh token plus password for a new access token.
+      description: |
+        The password is required on every refresh. A stolen refresh token alone is
+        therefore not sufficient for unattended access, and the user can revoke it by
+        changing their password, which bumps a per-user `tokenVersion`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken, password]
+              properties:
+                refreshToken: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: A fresh access token. No refresh token is issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accessToken, expiresInSeconds]
+                properties:
+                  accessToken: { type: string }
+                  expiresInSeconds: { type: integer, example: 900 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /v1/auth/change-password:
+    post:
+      tags: [auth]
+      summary: Change the password and revoke every outstanding token.
+      description: |
+        Invalidates all tokens, including this session's. The response carries the
+        *new* tokens so the caller stays signed in while every other device is locked
+        out — the behaviour a user expects from "someone else has my password".
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 12 }
+      responses:
+        "200":
+          description: Password changed; new tokens issued for this session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /v1/auth/me:
+    get:
+      tags: [auth]
+      summary: The authenticated user.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The caller's account. Never includes password material.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /v1/recordings:
+    post:
+      tags: [recordings]
+      summary: Open an upload session.
+      description: |
+        Returns 201 for a new session, or 200 with the existing session when a client
+        retries with the same `deviceRecordingId`. That reuse is deliberate: a client
+        retrying after a network drop should not accumulate half-empty rows.
+
+        The response includes `expectedChunks`, read back from what has already been
+        committed, so a reconnecting client can detect server-side loss rather than
+        assuming its own local state is still true.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceRecordingId]
+              properties:
+                deviceRecordingId:
+                  type: string
+                  pattern: "^[A-Za-z0-9_-]{1,128}$"
+                  description: The recording's opaque device-local id.
+      responses:
+        "201":
+          description: New upload session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recording, uploadSession]
+                properties:
+                  recording: { $ref: "#/components/schemas/Recording" }
+                  uploadSession: { $ref: "#/components/schemas/UploadSession" }
+        "200":
+          description: An existing open session for this `deviceRecordingId` was reused.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recording, uploadSession]
+                properties:
+                  recording: { $ref: "#/components/schemas/Recording" }
+                  uploadSession: { $ref: "#/components/schemas/UploadSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+    get:
+      tags: [recordings]
+      summary: List the authenticated user's recordings.
+      description: |
+        Strictly scoped to the caller. There is no parameter to widen it, and a
+        recording belonging to another user is reported as `404`, not `403`.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Recordings owned by the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recordings]
+                properties:
+                  recordings:
+                    type: array
+                    items: { $ref: "#/components/schemas/Recording" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /v1/recordings/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RecordingId"
+    get:
+      tags: [recordings]
+      summary: Fetch one recording's metadata.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Recording metadata. No audio, and no storage URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recording]
+                properties:
+                  recording: { $ref: "#/components/schemas/Recording" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [recordings]
+      summary: Delete a recording.
+      description: |
+        Blobs are deleted first, then the row. If blob deletion fails the row
+        survives, so the database never claims evidence is gone while ciphertext
+        remains in the bucket. The reverse order would leave orphaned,
+        unaccounted-for ciphertext, which is worse for a retention story than a
+        stale row.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204":
+          description: Deleted.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/recordings/{id}/chunks/{sequence}/commit:
+    parameters:
+      - $ref: "#/components/parameters/RecordingId"
+      - $ref: "#/components/parameters/Sequence"
+    post:
+      tags: [recordings]
+      summary: Declare one segment and obtain a presigned upload URL.
+      description: |
+        Step three of four. Declares the size and hashes of one sealed segment, then
+        mints a short-lived presigned `PUT`. The server **never** receives the audio
+        through this API; the client uploads ciphertext directly to object storage.
+
+        **Idempotency.** An `Idempotency-Key` header of 8..200 characters is
+        required. Replaying a key with different content is `409`
+        `IDEMPOTENCY_MISMATCH`. The lookup happens before the URL is minted, so a
+        replay cannot be used to generate unlimited valid upload grants.
+
+        The object key is `<userId>/<recordingId>/<zero-padded sequence>.ssg`. The
+        `userId` is a path segment, so a bug elsewhere cannot write outside the
+        user's prefix even if other checks were to fail.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200 }
+          description: Client-generated, stable per logical segment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sealedBytes, sealedSha256, plaintextSha256, keyVersion, encryptionVersion]
+              properties:
+                sealedBytes: { type: integer, minimum: 1 }
+                sealedSha256:
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
+                  description: SHA-256 of the sealed bytes. **This is the one digest the server can check.**
+                plaintextSha256:
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
+                  description: |
+                    SHA-256 of the plaintext, asserted by the client and returned to
+                    them as `plaintextSha256AssertedByClient`. **The server cannot and
+                    does not verify this.**
+                keyVersion: { type: integer, minimum: 1 }
+                encryptionVersion: { type: integer, minimum: 1 }
+      responses:
+        "201":
+          description: Segment declared; upload URL issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chunk, upload]
+                properties:
+                  chunk: { $ref: "#/components/schemas/Chunk" }
+                  upload: { $ref: "#/components/schemas/PresignedUpload" }
+        "200":
+          description: |
+            Idempotent replay. The same chunk and a fresh upload URL are returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chunk, upload]
+                properties:
+                  chunk: { $ref: "#/components/schemas/Chunk" }
+                  upload: { $ref: "#/components/schemas/PresignedUpload" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Either `CONFLICT` (already finalized) or `IDEMPOTENCY_MISMATCH` (key
+            replayed with different content).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: |
+            `CHECKSUM_MISMATCH` — an object already exists at this position with
+            different content.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/recordings/{id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/RecordingId"
+    post:
+      tags: [recordings]
+      summary: Finalize and issue a receipt.
+      description: |
+        Step four of four. Rejects with 422 unless every segment the manifest declares
+        is present at the declared size and sealed hash. This is the server-side loss
+        detector: if the client finalizes successfully, the bytes that reached this
+        server are the bytes it declared.
+
+        When `serverVerifiesSealedSha256` is enabled, stored bytes are re-hashed and
+        compared before the receipt is issued, and a mismatch blocks finalization.
+        Issuing a receipt for evidence the server does not hold would be the worst
+        failure mode available to this product, so it is not done under any
+        configuration.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifest]
+              properties:
+                manifest: { $ref: "#/components/schemas/EvidenceManifest" }
+      responses:
+        "200":
+          description: |
+            Finalized. The response carries the admissibility statement as well as the
+            receipt, so a developer integrating this cannot miss the limits of what the
+            receipt means.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recording, receipt, admissibilityStatement]
+                properties:
+                  recording: { $ref: "#/components/schemas/Recording" }
+                  receipt: { $ref: "#/components/schemas/UploadReceipt" }
+                  admissibilityStatement: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "CONFLICT — already finalized."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: |
+            `MANIFEST_INCOMPLETE` (a declared segment is absent) or
+            `CHECKSUM_MISMATCH` (stored bytes do not match the declared hash).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/recordings/{id}/chunks/{sequence}/download:
+    parameters:
+      - $ref: "#/components/parameters/RecordingId"
+      - $ref: "#/components/parameters/Sequence"
+    get:
+      tags: [recordings]
+      summary: Mint a short-lived download URL for one sealed segment.
+      description: |
+        Returns ciphertext. The bytes are encrypted on the device and the server
+        holds no decryption key, so serving them is a storage operation and nothing
+        more. The URL expires after 300 seconds.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Presigned download URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [download, chunk]
+                properties:
+                  download: { $ref: "#/components/schemas/PresignedDownload" }
+                  chunk: { $ref: "#/components/schemas/Chunk" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/receipts:
+    get:
+      tags: [receipts]
+      summary: List the caller's receipts, oldest first.
+      description: |
+        Each receipt carries `previousReceiptHash` and `auditChainHash`, forming a
+        per-user SHA-256 chain from the genesis value of 64 zeroes. Removing or
+        reordering any receipt breaks the chain and is therefore detectable by anyone
+        holding the list.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Receipts in chain order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [receipts]
+                properties:
+                  receipts:
+                    type: array
+                    items: { $ref: "#/components/schemas/UploadReceipt" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived access token from `/v1/auth/login`.
+
+  parameters:
+    RecordingId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Server-assigned recording id. Another user's id yields 404, not 403.
+    Sequence:
+      name: sequence
+      in: path
+      required: true
+      schema: { type: integer, minimum: 0 }
+      description: Zero-based segment position within the recording.
+
+  responses:
+    TokenPair:
+      description: Tokens, plus the authenticated user.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/TokenPair" }
+    BadRequest:
+      description: "`INVALID_REQUEST` — the request was malformed or failed validation."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthenticated:
+      description: "`UNAUTHENTICATED` — missing, malformed or expired bearer token."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidCredentials:
+      description: |
+        "`INVALID_CREDENTIALS`. Byte-identical for an unknown email and a wrong
+        password.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: "`FORBIDDEN`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: |
+        "`NOT_FOUND`. Used for both "does not exist" and "belongs to another user", so
+        this endpoint cannot be used to enumerate recording ids.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: "`RATE_LIMITED`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_REQUEST
+                - UNAUTHENTICATED
+                - INVALID_CREDENTIALS
+                - FORBIDDEN
+                - NOT_FOUND
+                - CONFLICT
+                - IDEMPOTENCY_MISMATCH
+                - CHECKSUM_MISMATCH
+                - MANIFEST_INCOMPLETE
+                - RATE_LIMITED
+                - SYNC_DISABLED
+                - INTERNAL
+            message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+      description: |
+        Unexpected errors are converted to `INTERNAL` with a generic message and no
+        stack trace or internal detail. Stack traces go to the server log only.
+
+    TokenPair:
+      type: object
+      required: [user, accessToken, refreshToken, expiresInSeconds]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        accessToken:
+          type: string
+          description: Short-lived. 15 minutes.
+        refreshToken:
+          type: string
+          description: |
+            Requires the account password to redeem, and is revoked by a password
+            change. A stolen refresh token alone does not grant unattended access.
+        expiresInSeconds: { type: integer, example: 900 }
+
+    User:
+      type: object
+      required: [id, email, createdAt]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        createdAt: { type: string, format: date-time }
+      description: |
+        Never includes `passwordHash` or `passwordSalt`. The stored hash is scrypt with
+        a per-user random salt.
+
+    Recording:
+      type: object
+      required: [id, clientReference, state, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        clientReference:
+          type: string
+          description: The `deviceRecordingId` the client supplied, echoed back.
+        state:
+          type: string
+          enum: [UPLOAD_SESSION, INCOMPLETE, COMPLETE, FINALIZED]
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        finalizedAt:
+          type: [string, "null"]
+          format: date-time
+        manifestSha256:
+          type: [string, "null"]
+          description: SHA-256 over the canonical manifest bytes, computed by the server.
+        declaredChunkCount: { type: [integer, "null"], minimum: 0 }
+        verifiedChunkCount:
+          type: [integer, "null"]
+          minimum: 0
+          description: Segments actually stored. A shortfall against the declared count is loss.
+
+    Chunk:
+      type: object
+      required: [sequenceNumber, sealedBytes, sealedSha256, plaintextSha256AssertedByClient]
+      properties:
+        sequenceNumber: { type: integer, minimum: 0 }
+        sealedBytes:
+          type: integer
+          minimum: 1
+          description: Ciphertext length, including the IV and the GCM tag.
+        sealedSha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Server-verifiable.
+        plaintextSha256AssertedByClient:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: |
+            **Asserted by the client. Never verified by this server.** The field is
+            named this way so the qualification is visible at every call site rather
+            than only in this document.
+        keyVersion: { type: integer, minimum: 1 }
+        encryptionVersion: { type: integer, minimum: 1 }
+        receivedAt: { type: string, format: date-time }
+      description: Metadata for one sealed segment. There is no audio field.
+
+    UploadSession:
+      type: object
+      required: [recordingId, sessionId, storagePrefix, expiresAtEpochMillis, expectedChunks]
+      properties:
+        recordingId: { type: string }
+        sessionId: { type: string }
+        storagePrefix:
+          type: string
+          description: "`<userId>/<recordingId>/` — the `userId` path segment bounds the blast radius of any future bug."
+        expiresAtEpochMillis: { type: integer, format: int64 }
+        expectedChunks:
+          type: array
+          description: Segments already committed, so a reconnecting client can detect server-side loss.
+          items:
+            type: object
+            required: [sequenceNumber, sealedBytes, sealedSha256]
+            properties:
+              sequenceNumber: { type: integer, minimum: 0 }
+              sealedBytes: { type: integer, minimum: 1 }
+              sealedSha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+
+    PresignedUpload:
+      type: object
+      required: [objectKey, url, method, headers, expiresAtEpochMillis]
+      properties:
+        objectKey: { type: string }
+        url: { type: string, format: uri }
+        method: { type: string, const: PUT }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        expiresAtEpochMillis: { type: integer, format: int64 }
+
+    PresignedDownload:
+      type: object
+      required: [recordingId, objectKey, url, expiresAtEpochMillis]
+      properties:
+        recordingId: { type: string }
+        objectKey: { type: string }
+        url: { type: string, format: uri }
+        expiresAtEpochMillis: { type: integer, format: int64 }
+
+    EvidenceManifest:
+      type: object
+      required:
+        - manifestVersion
+        - recordingId
+        - deviceRecordingId
+        - startedAtUtc
+        - activationSource
+        - sampleRateHz
+        - channels
+        - bitsPerSample
+        - segments
+      properties:
+        manifestVersion: { type: integer, minimum: 1 }
+        recordingId:
+          type: string
+          description: Must equal the upload session's `clientReference`.
+        deviceRecordingId: { type: string }
+        startedAtUtc: { type: string, format: date-time }
+        endedAtUtc: { type: [string, "null"], format: date-time }
+        activationSource:
+          type: string
+          description: |
+            How recording began. An unrecognised value is rejected rather than stored,
+            so the manifest cannot claim an activation path the server does not know
+            about.
+        sampleRateHz: { type: integer, minimum: 1, maximum: 384000 }
+        channels: { type: integer, minimum: 1, maximum: 8 }
+        bitsPerSample: { type: integer, enum: [8, 16, 24, 32] }
+        segments:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ManifestSegment" }
+      additionalProperties: true
+      description: Metadata and digests. **Contains no audio.**
+
+    ManifestSegment:
+      type: object
+      required: [sequenceNumber, sealedBytes, sealedSha256]
+      properties:
+        sequenceNumber: { type: integer, minimum: 0 }
+        sealedBytes: { type: integer, minimum: 1 }
+        sealedSha256: { type: string, pattern: "^[0-9a-f]{64}" }
+
+    UploadReceipt:
+      type: object
+      required:
+        - receiptId
+        - recordingId
+        - userId
+        - issuedAt
+        - serverIssuedAtEpochMillis
+        - chunkCount
+        - totalSealedBytes
+        - manifestSha256
+        - signatureAlgorithm
+        - manifestSigningPublicKey
+        - previousReceiptHash
+        - auditChainHash
+        - disclaimer
+      properties:
+        receiptId: { type: string }
+        recordingId: { type: string }
+        userId: { type: string }
+        issuedAt: { type: string, format: date-time }
+        serverIssuedAtEpochMillis:
+          type: integer
+          format: int64
+          description: Server time, deliberately distinct from the client's device timestamps.
+        chunkCount: { type: integer, minimum: 0 }
+        totalSealedBytes: { type: integer, minimum: 0 }
+        manifestSha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        signatureAlgorithm:
+          type: string
+          description: The algorithm the *client* used to sign the manifest.
+        manifestSigningPublicKey:
+          type: string
+          description: |
+            The client's public key, so a third party — a lawyer, a court officer — can
+            verify the manifest without being given anything secret.
+        previousReceiptHash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: The previous receipt in this user's chain, or 64 zeroes for the first.
+        auditChainHash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: "`H(previousReceiptHash || canonicalReceiptBody)`."
+        disclaimer: { type: string }
+
+    Capabilities:
+      type: object
+      required:
+        - storage
+        - serverHoldsDecryptionKey
+        - serverVerifiesGcmTag
+        - serverVerifiesPlaintext
+        - serverVerifiesSealedSha256
+        - registrationEnabled
+        - rateLimit
+        - downloadUrlTtlSeconds
+        - uploadUrlTtlSeconds
+        - disclaimer
+      properties:
+        storage: { type: string, const: encrypted-blobs-only }
+        serverHoldsDecryptionKey:
+          type: boolean
+          const: false
+          description: Always false. The service cannot decrypt anything it holds.
+        serverVerifiesGcmTag:
+          type: boolean
+          const: false
+          description: Always false. The AES-GCM tag is sealed inside the ciphertext.
+        serverVerifiesPlaintext:
+          type: boolean
+          const: false
+          description: Always false. Verifying a plaintext digest requires the plaintext.
+        serverVerifiesSealedSha256:
+          type: boolean
+          description: The only configuration-dependent verification capability.
+        registrationEnabled: { type: boolean }
+        rateLimit:
+          type: object
+          required: [max, windowMs]
+          properties:
+            max: { type: integer, minimum: 0 }
+            windowMs: { type: integer, minimum: 0 }
+        downloadUrlTtlSeconds: { type: integer }
+        uploadUrlTtlSeconds: { type: integer }
+        disclaimer: { type: string }
+
+    Readiness:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        database: { type: boolean }
+        objectStore: { type: boolean }
