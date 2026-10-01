@@ -282,6 +282,13 @@ class ArmingController @Inject constructor(
             }
         }
 
+        // Recorded on the evidence before the trigger, because the engine reads
+        // `activationSource` when it finalizes. Without this a real recording is
+        // labelled `TEST` — self-contradictory against `isTestRecording = false`,
+        // and disqualifying, since test-labelled evidence is excluded from export.
+        engine.activationSource = source.name
+        engine.activationConfidence = _lastDetection.value?.confidence
+
         return engine.trigger().onSuccess {
             gate.onRecordingStarted(timeProvider.elapsed().elapsedRealtimeMs)
             logger.i("recording started", fields = mapOf("source" to source.name))

@@ -50,18 +50,28 @@ data class SafeSignalUiState(
     val wakeWordAccurate: Boolean = false,
     val message: String? = null,
 ) {
-    /** True when nothing is blocking arming. A capability that was never probed counts as blocking. */
+    /** True when nothing is blocking arming. An unprobed capability counts as blocking. */
     val canArm: Boolean get() = blockers.isEmpty()
 
     /**
-     * The capabilities standing between the user and arming, phrased for display.
+     * The capabilities standing between the user and arming.
      *
      * Every capability is included rather than a hard-coded shortlist, so a new one
-     * cannot be added without appearing here. An unprobed capability is blocking,
-     * because "we did not check" must never read as "ready".
+     * cannot be added without appearing here, and an unprobed one is blocking —
+     * "we did not check" must never read as "ready".
+     *
+     * **The wake word is the one exception, and it has to be.** Arming does not
+     * depend on it: the in-app button and the volume pattern are both reliable, and
+     * gating on a detector whose accuracy has never been measured would mean the app
+     * cannot be armed at all until a problem is solved that is not yet solved. That
+     * is the "the only trigger is the weak one" failure in its purest form, and the
+     * first run of this screen showed it — a disabled Arm button, no explanation
+     * the user could act on beyond "not ready".
      */
     val blockers: List<String>
-        get() = readiness.all.filterNot { it.isReady }.mapNotNull { blockerLabel(it.capability) }
+        get() = readiness.all
+            .filterNot { it.isReady || it.capability == Capability.WakeWord }
+            .mapNotNull { blockerLabel(it.capability) }
 
     val isRecording: Boolean get() = arming is ArmingState.Recording
 

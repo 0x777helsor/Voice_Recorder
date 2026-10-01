@@ -716,8 +716,23 @@ class SegmentedRecordingEngine(
         return out
     }
 
-    /** Recorded on the evidence package for transparency. */
+    /**
+     * How this recording was started, recorded on the evidence package.
+     *
+     * Defaults to `TEST` because the engine was originally only used for test runs,
+     * and a wrong default is the safe direction *only* while nothing else can reach
+     * it. That stopped being true when arming was wired up: a real emergency
+     * recording was being labelled `TEST`, which is both false and disqualifying —
+     * a reader of the evidence would conclude it was a diagnostic run, and the
+     * test-labelled path is excluded from export.
+     *
+     * `isTestSession` is the separate, authoritative flag for "is this a test", and
+     * the two must agree. A recording that says `isTestRecording = false` and
+     * `activationSource = TEST` is self-contradictory, and that contradiction is
+     * exactly what a test on this bug should catch.
+     */
     var activationSource: String = "TEST"
+
     var activationConfidence: Float? = null
 
     private companion object {
