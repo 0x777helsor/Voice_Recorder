@@ -16,8 +16,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 /**
  * The platform boundary for microphone access.
@@ -87,6 +85,16 @@ class AudioRecordSource(
     private var audioRecord: AudioRecord? = null
     private var grantedSampleRate: Int = 0
 
+    /**
+     * The buffer this record was constructed with, in samples.
+     *
+     * Kept so [read] can clamp to it. `AudioRecord.read` rejects a size larger
+     * than the record's own capacity with `ERROR_BAD_VALUE`, and the only reliable
+     * record of that capacity is what was requested at construction — the getter
+     * is not available on every supported API level.
+     */
+    private var capacityShorts: Int = 0
+
     override val isOpen: Boolean get() = audioRecord?.state == AudioRecord.STATE_INITIALIZED
 
     override val actualSampleRateHz: Int get() = grantedSampleRate
@@ -113,7 +121,16 @@ class AudioRecordSource(
 
             // 4x the minimum gives the reader room to ride out a scheduling delay
             // without the recorder's own buffer overrunning and dropping frames.
-            val bufferBytes = minBufferSize * 4
+            //
+            // Sizing only from the minimum is a trap. On several devices
+            // `getMinBufferSize` at 48 kHz mono returns less than a single pump
+            // read, so `AudioRecord.read` rejects every frame with
+            // `ERROR_BAD_VALUE` (-2) and the app records nothing at all — silently,
+            // apart from one log line. A phone that happened to report a larger
+            // minimum hid this for as long as it was the only test device.
+            // So: size for the read that will actually happen, then add headroom.
+            val frameBytes = frameBytes(config)
+            val bufferBytes = maxOf(minBufferSize * 4, frameBytes * 4)
 
             val record = AudioRecord(
                 // VOICE_RECOGNITION disables OEM voice-enhancement pipelines such as
@@ -139,19 +156,37 @@ class AudioRecordSource(
             }
 
             audioRecord = record
+            capacityShorts = bufferBytes / BYTES_PER_SAMPLE
             grantedSampleRate = record.sampleRate
         }
     }
 
     override suspend fun read(target: ShortArray): Int {
         val record = audioRecord ?: return AudioRecord.ERROR_INVALID_OPERATION
-        val byteBuffer = ByteBuffer.allocate(target.size * 2).order(ByteOrder.LITTLE_ENDIAN)
-        val read = record.read(byteBuffer, 0, byteBuffer.capacity())
-        if (read <= 0) return read
-        byteBuffer.rewind()
-        val shortCount = read / 2
-        byteBuffer.asShortBuffer().get(target, 0, shortCount)
-        return shortCount
+
+        // The primitive overload, not `read(ByteBuffer, offset, size)`.
+        //
+        // The ByteBuffer overload is deprecated and is in fact broken on at least
+        // one shipping ROM: it rejects the call with `ERROR_BAD_VALUE` and logs
+        // "AudioRecord.read() called with invalid blocking mode", so every single
+        // frame fails and the app records nothing. The primitive overload is
+        // non-deprecated, has no such failure, and avoids allocating a fresh
+        // ByteBuffer twenty times a second.
+        //
+        // Clamped rather than trusted, for the same reason as the buffer sizing: a
+        // read larger than the record's capacity is rejected outright, which is a
+        // total loss of the recording rather than a partial one.
+        val readShorts = if (capacityShorts > 0) {
+            minOf(target.size, capacityShorts)
+        } else {
+            target.size
+        }
+
+        // Read straight into the caller's array. PCM_16BIT arrives little-endian,
+        // which is the byte order of every ABI Android runs on, so no conversion
+        // is needed — where the ByteBuffer overload paid for one on every frame.
+        val read = record.read(target, 0, readShorts)
+        return read
     }
 
     override suspend fun close() {
@@ -161,6 +196,7 @@ class AudioRecordSource(
                 runCatching { record.release() }
             }
             audioRecord = null
+            capacityShorts = 0
         }
     }
 }
@@ -192,8 +228,13 @@ class AudioFramePump(
         val framesPerRead = config.sampleRateHz / READS_PER_SECOND
         val buffer = ShortArray(config.channels * framesPerRead)
 
-        val created = SupervisorJob(scope.coroutineContext[Job])
-        job = scope.launch(dispatchers.audio) {
+        // The job that is returned must be the job that is running. This used to
+        // return a standalone `SupervisorJob` that the launched coroutine was not a
+        // child of, so cancelling the returned job — which is what the engine does
+        // on stop — cancelled nothing. The pump only ever ended because closing the
+        // audio source made its next read fail, which meant "stop" was relying on
+        // an error path rather than doing what it said.
+        val created = scope.launch(dispatchers.audio) {
             while (isActive) {
                 val read = source.read(buffer)
                 when {
@@ -212,17 +253,13 @@ class AudioFramePump(
                 }
             }
         }
+        job = created
         return created
     }
 
     fun stop() {
         job?.cancel()
         job = null
-    }
-
-    private companion object {
-        /** ~20 reads per second: responsive to stop requests, cheap on battery. */
-        const val READS_PER_SECOND = 20
     }
 }
 
@@ -238,6 +275,29 @@ class DefaultAudioSourceFactory(
 }
 
 /** Mutable recorder state holder shared with the UI layer. */
+/** 16-bit PCM: two bytes per sample. */
+internal const val BYTES_PER_SAMPLE: Int = 2
+
+/**
+ * Frame cadence driven by [AudioFramePump]: roughly 20 reads per second, which is
+ * responsive enough to react to a stop request and cheap enough not to drain the
+ * battery.
+ *
+ * Declared here, next to [frameBytes], so the source that sizes the `AudioRecord`
+ * buffer and the pump that fills it cannot disagree about how large a frame is.
+ * They did disagree once, and the result was an app that recorded nothing.
+ */
+internal const val READS_PER_SECOND: Int = 20
+
+/**
+ * Bytes in one pump frame for [config].
+ *
+ * This is the minimum a record's buffer must be able to hold, otherwise the very
+ * first read is rejected.
+ */
+internal fun frameBytes(config: RecordingConfig): Int =
+    config.channels * config.sampleRateHz / READS_PER_SECOND * BYTES_PER_SAMPLE
+
 class RecordingStateHolder(initial: RecordingState = RecordingState.Idle) {
     private val _state = MutableStateFlow<RecordingState>(initial)
     val state: StateFlow<RecordingState> = _state.asStateFlow()

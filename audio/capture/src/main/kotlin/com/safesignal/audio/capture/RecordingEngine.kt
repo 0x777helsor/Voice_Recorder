@@ -93,6 +93,19 @@ enum class AudioFormat(val userLabel: String, val isLossless: Boolean) {
 sealed interface RecordingState {
     data object Idle : RecordingState
     data object Starting : RecordingState
+
+    /**
+     * Microphone open, nothing written to evidence yet (SPEC §12).
+     *
+     * Reached only when `preBufferSeconds > 0`. Frames arriving in this state
+     * go into the bounded RAM ring and nowhere else — they are discarded unless
+     * [RecordingEngine.trigger] arrives. This state exists so that "pre-roll"
+     * has an observable meaning: before this was explicit, frames captured
+     * while listening were written both to the ring and to segment 0, which
+     * would have duplicated the pre-roll audio.
+     */
+    data object Listening : RecordingState
+
     data object Recording : RecordingState
 
     /** Active segment is being flushed and sealed. */
@@ -134,6 +147,14 @@ data class FinalizedRecording(
     val recordingId: String,
     val config: RecordingConfig,
     val segments: List<CommittedSegment>,
+    /**
+     * When the *evidence* began — activation time, minus any pre-roll duration.
+     *
+     * Not the moment the microphone opened. With pre-roll enabled those differ
+     * by up to 15 seconds, and the timeline written to the manifest has to
+     * cover the audio that is actually in segment 0. Listening time before
+     * activation is deliberately excluded: it is not evidence.
+     */
     val startedAtElapsed: ElapsedMillis,
     val endedAtElapsed: ElapsedMillis,
     val startedAtWallClockMillis: Long,
@@ -184,7 +205,25 @@ data class FinalizedRecording(
  */
 interface RecordingEngine {
 
+    /**
+     * Opens the microphone and begins a session.
+     *
+     * The resulting state depends on the configuration: [RecordingState.Listening]
+     * when `config.preBufferSeconds > 0`, otherwise [RecordingState.Recording].
+     * The caller does not choose; it reacts, because the choice is the user's
+     * pre-roll setting and the engine owns the pre-roll ring.
+     */
     suspend fun start(config: RecordingConfig): Result<RecordingSession>
+
+    /**
+     * Confirms an activation, moving [RecordingState.Listening] to
+     * [RecordingState.Recording] and seeding any pre-roll into segment 0.
+     *
+     * Called when the wake word fires or the user presses record. Must be
+     * idempotent: a duplicate wake-word detection must not prepend the pre-roll
+     * twice. A no-op success when the engine is already recording.
+     */
+    suspend fun trigger(): Result<Unit>
 
     suspend fun stop(): Result<FinalizedRecording>
 
