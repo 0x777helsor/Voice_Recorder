@@ -100,6 +100,10 @@ object AppModule {
         SafeSignalDatabase.get(context)
 
     @Provides
+    fun provideRecordingDao(database: SafeSignalDatabase): com.safesignal.core.database.dao.RecordingDao =
+        database.recordingDao()
+
+    @Provides
     @Singleton
     fun provideEvidenceRoot(@ApplicationContext context: Context): File =
         File(context.noBackupFilesDir, EVIDENCE_DIR).apply { mkdirs() }

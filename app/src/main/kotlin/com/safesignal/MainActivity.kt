@@ -78,114 +78,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    ReadinessRoute(
-                        permissionChecker = permissionChecker,
-                        probes = probes,
-                        activity = this,
-                    )
+                    SafeSignalRoot(activity = this)
                 }
             }
         }
     }
-}
 
-/**
- * Wires the readiness screen to real permission state and real probes.
- *
- * Split from [MainActivity] so the composable takes its dependencies as
- * parameters and can be reasoned about without a running activity.
- */
-@Composable
-private fun ReadinessRoute(
-    permissionChecker: AndroidPermissionChecker,
-    probes: ReadinessProbes,
-    activity: ComponentActivity,
-) {
-    val context = LocalContext.current
-
-    // Re-probe on every resume, not only at startup.
-    //
-    // A user can grant the microphone from Android Settings while this app sits
-    // in the background, and the platform never tells the app about it. Without
-    // this, the screen kept claiming "not granted" after the permission had been
-    // granted — which is exactly what a real device showed before this existed.
-    var resumeCount by remember { mutableIntStateOf(0) }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) resumeCount++
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    val microphoneStatus = permissionChecker.status(SafeSignalPermission.RECORD_AUDIO, activity)
-    val notificationStatus = permissionChecker.status(SafeSignalPermission.POST_NOTIFICATIONS, activity)
-
-    val requestPermissions = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ ->
-        // A grant made in Settings must not leave stale request history behind,
-        // or the next revocation would be reported as permanently blocked.
-        permissionChecker.forgetRequestsNowGranted(SafeSignalPermission.ALL)
-    }
-
-    // Whether a notification can actually be *seen*, which is what the recording
-    // service requires. Re-evaluated on resume like everything else: the user can
-    // disable notifications from the shade without leaving the app.
-    val notificationsVisible = remember(resumeCount, context) {
-        NotificationManagerCompat.from(context).areNotificationsEnabled()
-    }
-
-    val report = remember(resumeCount, microphoneStatus, notificationStatus, notificationsVisible) {
-        ReadinessReport.build(
-            listOf(
-                Capability.MicrophonePermission to { microphoneOutcome(microphoneStatus) },
-                Capability.NotificationPermission to {
-                    notificationOutcome(
-                        permissionGranted = notificationStatus == PermissionStatus.Granted,
-                        notificationsEnabled = notificationsVisible,
-                    )
-                },
-                Capability.Encryption to { probes.encryption() },
-                Capability.Storage to { probes.storage() },
-                Capability.ForegroundService to {
-                    probes.foregroundService(context.hasEmergencyAudioService())
-                },
-                Capability.WakeWord to { probes.wakeWord(detectorAvailable = false) },
-            )
-        )
-    }
-
-    ReadinessScreen(
-        report = report,
-        microphoneStatus = microphoneStatus,
-        notificationsVisible = notificationsVisible,
-        action = testStartAction(
-            microphone = microphoneStatus,
-            notification = notificationStatus,
-            notificationsVisible = notificationsVisible,
-            isNotificationPermissionRequestable = Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.TIRAMISU,
-        ),
-        onRequestMicrophone = {
-            // Recorded before the dialog is shown. `shouldShowRequestPermission-
-            // Rationale` is false both before the first request and after a block,
-            // so this flag is the only thing that can tell those two cases apart.
-            permissionChecker.recordRequest(SafeSignalPermission.REQUESTED_AT_ONBOARDING)
-            requestPermissions.launch(
-                SafeSignalPermission.REQUESTED_AT_ONBOARDING.map { it.manifestPermission }.toTypedArray()
-            )
-        },
-        onRequestNotifications = {
-            permissionChecker.recordRequest(setOf(SafeSignalPermission.POST_NOTIFICATIONS))
-            requestPermissions.launch(
-                arrayOf(SafeSignalPermission.POST_NOTIFICATIONS.manifestPermission),
-            )
-        },
-        onOpenAppSettings = { context.openAppSettings() },
-        onRunTest = { context.startTestRecording() },
-    )
 }
 
 /**

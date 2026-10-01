@@ -107,6 +107,15 @@ class ArmingController @Inject constructor(
     val isRecording: Boolean get() = _state.value is ArmingState.Recording
 
     /**
+     * Whether the detector can actually match the configured phrase.
+     *
+     * Separate from "armed". The local engine initialises and starts successfully
+     * while unenrolled and then matches nothing, so an armed indicator that ignored
+     * this would claim a working detector that has never fired.
+     */
+    val wakeWordEnrolled: Boolean get() = wakeWordEngine.isEnrolled
+
+    /**
      * When the current arming expires, on the monotonic clock. Null when disarmed.
      *
      * Exposed so the UI can show a countdown rather than "armed" with no end. An
