@@ -12,6 +12,18 @@ local.properties
 *.iml
 .DS_Store
 
+# Node (backend/)
+# `dist/` is the tsc output and is rebuilt by `npm run build`; `node_modules/` is
+# restored by `npm ci`. Neither belongs in history.
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local environment files. `.env.example` IS committed; the real one never is.
+.env
+.env.*
+!.env.example
+
 # Secrets: never commit a real endpoint, key or credential.
 *.jks
 *.keystore
