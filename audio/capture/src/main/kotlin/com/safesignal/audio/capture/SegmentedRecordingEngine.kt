@@ -124,6 +124,22 @@ class SegmentedRecordingEngine(
      */
     var isTestSession: Boolean = false
 
+    /**
+     * Optional per-frame observer, called on the capture dispatcher.
+     *
+     * Exists so a wake-word detector can consume the capture stream without owning
+     * a second microphone. Suspending so the detector can do real work, but it is
+     * invoked **inline** on the capture path, so anything slow here directly delays
+     * capture. That is the correct trade for a detector that must not miss the
+     * audio it is deciding about; a detector that can afford to be sampled
+     * periodically should subsample rather than return from this call slowly.
+     *
+     * Failures are swallowed and logged. A broken detector must not stop the
+     * recorder, because a recording that stopped when the detector threw would lose
+     * evidence to a non-critical component.
+     */
+    var frameObserver: (suspend (ShortArray) -> Unit)? = null
+
     override suspend fun start(config: RecordingConfig): Result<RecordingSession> = mutex.withLock {
         runCatching {
             check(_state.value == RecordingState.Idle) { "engine is not idle: ${_state.value}" }
@@ -237,6 +253,21 @@ class SegmentedRecordingEngine(
     override suspend fun onFrame(frame: ShortArray) {
         if (paused) return
         val config = activeConfig ?: return
+
+        // Every frame is offered to the observer before anything else, and in
+        // **both** Listening and Recording states.
+        //
+        // The wake-word detector has to see exactly the samples that will end up in
+        // the evidence, for two reasons. It is the only way detection and capture
+        // stay in step — a detector fed by a second `AudioRecord` would be racing a
+        // second open of a microphone the platform may not even grant. And the
+        // pre-roll ring must hold the same audio the detector rejected on, or
+        // "the five seconds before the phrase" would be five seconds of something
+        // else.
+        frameObserver?.let { observer ->
+            runCatching { observer(frame) }
+                .onFailure { logger.w("frame observer failed", it) }
+        }
 
         when (_state.value) {
             // Listening: the ring only. These samples are evidence if and when
@@ -453,6 +484,13 @@ class SegmentedRecordingEngine(
             pumpJob = null
 
             val endedAt = timeProvider.elapsed()
+            // Read the wrapped DEK *before* clearing. The plaintext key is zeroed
+            // immediately below, and once that happens the wrapped blob is the only
+            // thing that can ever decrypt this recording. Capturing it into the
+            // result is what makes the audio recoverable; the alternative is
+            // sealing a recording that nothing will ever be able to open.
+            val material = keyMaterial
+                ?: error("recording $current had no key material; it cannot be recovered")
             val result = FinalizedRecording(
                 recordingId = current.recordingId,
                 config = config,
@@ -469,6 +507,7 @@ class SegmentedRecordingEngine(
                     if (seededPreRollMillis > 0) add("preroll_ms=$seededPreRollMillis")
                     if (quality != CaptureQuality.NORMAL) add("capture_quality=${quality.name}")
                 },
+                wrappedKey = material.wrappedKey,
             )
 
             _state.value = RecordingState.Finalizing

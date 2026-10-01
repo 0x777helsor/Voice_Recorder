@@ -187,6 +187,15 @@ class SessionReportingTest {
             activationSource = EmergencyRecordingController.ACTIVATION_SOURCE_TEST,
             activationConfidence = null,
             isTestRecording = true,
+            // Present in every finalized capture. A real engine supplies the blob it
+            // read from the key material just before zeroing the plaintext key.
+            wrappedKey = com.safesignal.core.crypto.WrappedKey(
+                wrappedKeyBytes = ByteArray(32),
+                algorithm = "AES/GCM/NoPadding",
+                keyVersion = 1,
+                iv = ByteArray(12),
+                provider = "test",
+            ),
         )
     }
 }

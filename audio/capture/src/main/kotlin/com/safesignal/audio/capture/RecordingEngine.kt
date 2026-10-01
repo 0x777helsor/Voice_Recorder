@@ -1,6 +1,7 @@
 package com.safesignal.audio.capture
 
 import com.safesignal.core.common.model.ElapsedMillis
+import com.safesignal.core.crypto.WrappedKey
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -178,6 +179,23 @@ data class FinalizedRecording(
     val activationConfidence: Float?,
     val isTestRecording: Boolean,
     val notes: List<String> = emptyList(),
+
+    /**
+     * The recording's data key, wrapped by the Keystore key-establishment key.
+     *
+     * **This is ciphertext, and it is not optional.** The plaintext DEK is zeroed in
+     * [stop] the moment the last segment is sealed, which is the right thing to do —
+     * but that makes the wrapped blob the *only* remaining way to ever decrypt this
+     * recording. If it is dropped here it is gone permanently, because the DEK
+     * exists nowhere else.
+     *
+     * It was dropped here until now. `RecordingEntity` has carried `wrapped_key` and
+     * `wrapped_key_iv` columns since the schema was written and nothing ever wrote
+     * them, so every recording the app had produced was permanently unopenable. The
+     * bug was invisible because nothing had ever tried to open one — which is
+     * exactly what the history and playback screens do.
+     */
+    val wrappedKey: WrappedKey,
 ) {
     val totalSealedBytes: Long get() = segments.sumOf { it.sealedLengthBytes }
 

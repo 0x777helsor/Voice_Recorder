@@ -3,13 +3,22 @@ package com.safesignal.di
 import android.content.Context
 import com.safesignal.core.common.concurrent.DefaultDispatcherProvider
 import com.safesignal.core.common.concurrent.DispatcherProvider
+import com.safesignal.core.common.log.LogRecord
+import com.safesignal.core.common.log.LogSink
+import com.safesignal.core.common.log.RedactingLogger
+import com.safesignal.core.common.log.SafeLogger
+import com.safesignal.core.common.log.Severity
 import com.safesignal.core.common.permission.AndroidPermissionChecker
+import com.safesignal.service.LogcatLogSink
 import com.safesignal.core.common.time.SystemTimeProvider
 import com.safesignal.core.common.time.TimeProvider
 import com.safesignal.core.crypto.AndroidKeystoreKeyProvider
 import com.safesignal.core.crypto.KeyProvider
 import com.safesignal.core.crypto.ManifestSigner
 import com.safesignal.core.crypto.RecordingKeyManager
+import com.safesignal.core.database.SafeSignalDatabase
+import com.safesignal.audio.wakeword.LocalWakeWordEngine
+import com.safesignal.audio.wakeword.WakeWordEngine
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -56,6 +65,39 @@ object AppModule {
     @Singleton
     fun provideManifestSigner(keyProvider: KeyProvider): ManifestSigner =
         ManifestSigner(keyProvider)
+
+    /**
+     * The wake-word detector, and the only production binding for it.
+     *
+     * `LocalWakeWordEngine` performs detection entirely on the device. That is a
+     * requirement, not a preference: the specification mandates offline activation,
+     * and a cloud speech API as the activation path would upload ambient audio to a
+     * third party the moment a user armed the app. A detector that phones home is
+     * not usable here even when it would be more accurate.
+     */
+    /**
+     * The production logger.
+     *
+     * Every line passes through [RedactingLogger] first, so a careless call site
+     * cannot leak a token, a key or a recording id into logcat. Logcat is the sink
+     * because a user reporting "it did not record" needs something readable on the
+     * device without a debug build attached.
+     */
+    @Provides
+    @Singleton
+    fun provideSafeLogger(): SafeLogger = RedactingLogger(tag = "SafeSignal", sink = LogcatLogSink())
+
+    @Provides
+    @Singleton
+    fun provideWakeWordEngine(
+        timeProvider: TimeProvider,
+        dispatchers: DispatcherProvider,
+    ): WakeWordEngine = LocalWakeWordEngine(timeProvider, dispatchers)
+
+    @Provides
+    @Singleton
+    fun provideDatabase(@ApplicationContext context: Context): SafeSignalDatabase =
+        SafeSignalDatabase.get(context)
 
     @Provides
     @Singleton

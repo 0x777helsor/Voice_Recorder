@@ -59,6 +59,23 @@ class MockWakeWordEngine(
     val isStarted: Boolean get() = started
 
     /**
+     * The mock is never enrolled.
+     *
+     * It has no acoustic model, so claiming otherwise would let the UI show a
+     * confident "armed, listening for your phrase" over an engine that recognises
+     * nothing — the exact false assurance this project refuses to give. A
+     * production build selects an enrolled engine or says it is not ready.
+     */
+    override val isEnrolled: Boolean = false
+
+    /**
+     * Injected so tests can drive the whole frame path rather than only the event
+     * shortcut. The mock analyses nothing by design, so this always reports no
+     * match; it exists so code under test compiles against the same interface.
+     */
+    override suspend fun submitFrame(pcm: ShortArray): Boolean = false
+
+    /**
      * Injects a detection, as though the engine had recognised the phrase.
      *
      * Silently ignored while stopped. A test double that emitted events after

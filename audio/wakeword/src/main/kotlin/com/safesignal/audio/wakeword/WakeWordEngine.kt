@@ -102,9 +102,42 @@ interface WakeWordEngine {
 
     suspend fun start(): Result<Unit>
 
+    /**
+     * Offers one captured audio frame for analysis, returning whether it matched.
+     *
+     * Part of the interface rather than an implementation detail because the caller
+     * must own this decision. A detector with its own `AudioRecord` would be
+     * requesting a second open of a microphone the platform may refuse to grant, and
+     * even if granted the two streams are not guaranteed to be aligned — so the
+     * detector could fire on audio that was never recorded, and the recorder's
+     * pre-roll ring could hold different audio from the one the detector analysed.
+     * Feeding the recorder's own frames is the only arrangement that keeps detection
+     * and evidence in step.
+     *
+     * The array is the recorder's live buffer and is reused between reads. An
+     * implementation that needs to retain it must copy, and must not assume the
+     * contents are stable after returning.
+     *
+     * @return true when this frame alone met the configured confidence threshold.
+     *   Implementations with internal state (windowing, smoothing) may return false
+     *   for a frame that contributed to a later detection.
+     */
+    suspend fun submitFrame(pcm: ShortArray): Boolean
+
     suspend fun stop()
 
     suspend fun release()
+
+    /**
+     * Whether this engine can actually detect the configured phrase.
+     *
+     * Distinct from a successful [initialize]. The local template engine
+     * initialises successfully while unenrolled and then legitimately matches
+     * nothing, so "armed" over an unenrolled detector would be a lie — the user
+     * would say the phrase and nothing would happen, with every indicator
+     * reporting a healthy armed session.
+     */
+    val isEnrolled: Boolean
 
     /**
      * Engine identification, persisted in evidence metadata (SPEC §93).

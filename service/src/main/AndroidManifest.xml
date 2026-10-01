@@ -20,6 +20,27 @@
             android:foregroundServiceType="microphone"
             android:stopWithTask="false" />
 
+        <!--
+            Receives media-button events while the app is backgrounded.
+
+            This is the mechanism behind the volume-pattern trigger, and it has to be
+            declared here or the PendingIntent the media session publishes is never
+            delivered — the app would appear armed and the trigger could never fire.
+
+            `exported="true"` is required because the *system* delivers the broadcast,
+            and the platform refuses to deliver to an unexported receiver. It is safe
+            because the receiver does nothing on its own: it forwards the key event to
+            the in-process matcher, and the pattern must match before anything happens.
+            There is no way to start a recording by sending this broadcast directly.
+        -->
+        <receiver
+            android:name=".trigger.VolumeKeyReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

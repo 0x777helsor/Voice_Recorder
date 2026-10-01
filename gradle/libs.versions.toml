@@ -17,6 +17,7 @@ minSdk = "26"
 
 androidxCore = "1.17.0"
 appcompat = "1.7.1"
+media = "1.7.0"
 activityCompose = "1.12.4"
 composeBom = "2025.10.01"
 lifecycle = "2.9.4"
@@ -41,6 +42,7 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+androidx-media = { module = "androidx.media:media", version.ref = "media" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }

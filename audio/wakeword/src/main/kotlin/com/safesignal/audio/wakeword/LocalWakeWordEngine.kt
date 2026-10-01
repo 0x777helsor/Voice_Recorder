@@ -101,47 +101,55 @@ class LocalWakeWordEngine(
         template = built
     }
 
+    /**
+     * Marks the engine as running.
+     *
+     * There is deliberately no loop here any more. The previous implementation
+     * started a coroutine that woke every 100 ms, found an empty `window` because
+     * nothing ever assigned to it, and went back to sleep — a periodic no-op that
+     * cost a wakeup and gave the appearance of a running detector. Analysis is now
+     * driven by [submitFrame], called from the capture loop, which is both correct
+     * and free of the wasted wakeups.
+     *
+     * `start()` still returns a failure when [initialize] has not been called,
+     * because a caller that skipped initialisation has a bug worth surfacing.
+     */
     override suspend fun start(): Result<Unit> {
-        val activeConfig = config
-            ?: return Result.failure(IllegalStateException("initialize() must be called before start()"))
-        template ?: return Result.success(Unit) // Initialised but not enrolled: listens for nothing.
+        config ?: return Result.failure(IllegalStateException("initialize() must be called before start()"))
         if (job?.isActive == true) return Result.success(Unit)
-
-        val created = CoroutineScope(
-            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.CoroutineName("safesignal-wakeword"),
-        )
-        scope = created
-        job = created.launch(dispatchers.audio) {
-            var window = ShortArray(0)
-            while (isActive) {
-                // The real implementation pulls from the shared capture reader.
-                // Pulling frames is owned by the service; here we simply await
-                // the next analysis tick so the loop never busy-spins.
-                kotlinx.coroutines.delay(FRAME_ANALYSIS_INTERVAL_MS)
-                if (window.isNotEmpty()) {
-                    analyse(window, activeConfig)?.let { event ->
-                        _events.emit(event)
-                    }
-                }
-            }
-        }
+        // A completed job, not a running loop. `isActive` is false immediately, and
+        // that is the point: there is no background work any more, because analysis
+        // is driven by [submitFrame] from the capture loop. A future implementation
+        // with its own decoding thread would hold a real job here instead.
+        job = Job().also { scope = null }
         return Result.success(Unit)
     }
 
     /**
      * Feeds one frame window into the detector.
      *
-     * Exposed so the service can drive analysis from the audio capture loop
-     * without the engine owning a thread, and so tests can exercise detection
-     * without a microphone.
+     * This is the production entry point. The capture loop hands over the same
+     * frames the recorder writes, so detection and evidence are always in step — see
+     * the note on [WakeWordEngine.submitFrame] for why a second audio stream is not
+     * an option.
      */
-    suspend fun submitFrame(pcm: ShortArray): Boolean {
+    override suspend fun submitFrame(pcm: ShortArray): Boolean {
         val activeConfig = config ?: return false
         val activeTemplate = template ?: return false
         return analyse(pcm, activeConfig, activeTemplate)
             .also { if (it != null) _events.emit(it) }
             .let { it != null }
     }
+
+    /**
+     * False until a template is installed.
+     *
+     * Reported rather than assumed, because the engine initialises and starts
+     * successfully while unenrolled and then matches nothing. A UI that inferred
+     * readiness from a successful start would show a confident "armed" over a
+     * detector that cannot fire.
+     */
+    override val isEnrolled: Boolean get() = template != null
 
     override suspend fun stop() {
         job?.cancel()

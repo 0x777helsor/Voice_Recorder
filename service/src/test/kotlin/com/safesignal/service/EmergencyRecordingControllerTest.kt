@@ -213,6 +213,8 @@ class EmergencyRecordingControllerTest {
         )
     }
 
+    private val recordingEvidenceStore = RecordingEvidenceStore()
+
     private fun kotlinx.coroutines.test.TestScope.controller(
         factory: AudioSourceFactory,
         evidenceRoot: File = File(temporaryFolder.root, "evidence").apply { mkdirs() },
@@ -223,6 +225,11 @@ class EmergencyRecordingControllerTest {
         timeProvider = clock(),
         dispatchers = testDispatchers(),
         logger = logger,
+        // A recording fake rather than the real archiver, which needs a Room
+        // database and a Keystore-backed signer that do not exist in a JVM test.
+        // The sealing round trip is covered properly by EvidenceSealingTest, which
+        // drives the real signer and the real verification path.
+        evidenceStore = recordingEvidenceStore,
     )
 }
 
@@ -301,20 +308,6 @@ private class SilentAudioSource(
  * test asserting on sealed evidence would pass for the wrong reason — or fail for
  * a reason that has nothing to do with the controller.
  */
-private class SchedulerTimeProvider(
-    private val scheduler: TestCoroutineScheduler,
-) : TimeProvider {
-    override fun now(): InstantEpochMillis = InstantEpochMillis(scheduler.currentTime)
-    override fun elapsed(): ElapsedMillis = ElapsedMillis(scheduler.currentTime)
-}
 
-/** Routes every dispatcher at the test scope, so nothing escapes virtual time. */
-private class TestDispatchers(scheduler: TestCoroutineScheduler) : DispatcherProvider {
-    private val dispatcher: CoroutineDispatcher = UnconfinedTestDispatcher(scheduler)
-    override val main: CoroutineDispatcher get() = dispatcher
-    override val io: CoroutineDispatcher get() = dispatcher
-    override val default: CoroutineDispatcher get() = dispatcher
-    override val audio: CoroutineDispatcher get() = dispatcher
-}
 
 private const val SEGMENT_DURATION_MILLIS = 5_000L

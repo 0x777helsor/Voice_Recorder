@@ -8,10 +8,13 @@ import com.safesignal.audio.capture.RecordingEngine
 import com.safesignal.audio.capture.RecordingSession
 import com.safesignal.audio.capture.RecordingState
 import com.safesignal.audio.capture.SegmentedRecordingEngine
+import com.safesignal.audio.capture.toRecordingToSeal
 import com.safesignal.core.common.concurrent.DispatcherProvider
 import com.safesignal.core.common.log.SafeLogger
 import com.safesignal.core.common.time.TimeProvider
 import com.safesignal.core.crypto.RecordingKeyManager
+import com.safesignal.data.local.sealing.ArchiveRequest
+import com.safesignal.data.local.sealing.EvidenceStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -55,6 +58,7 @@ class EmergencyRecordingController @Inject constructor(
     private val timeProvider: TimeProvider,
     private val dispatchers: DispatcherProvider,
     private val logger: SafeLogger,
+    private val evidenceStore: EvidenceStore,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.default)
@@ -141,22 +145,54 @@ class EmergencyRecordingController @Inject constructor(
         }
 
     /**
-     * Stops recording and returns what was actually preserved.
+     * Stops recording, seals it, stores it, and returns what was preserved.
      *
      * Safe to call when the engine has already stopped itself, because the engine
      * returns the same finalized recording rather than failing — a stop triggered
      * by the storage limit must be reportable to the user as a success, not as a
      * crash.
+     *
+     * Sealing happens here as well as in [ArmingController] because a test run is
+     * still a real capture: it produced sealed ciphertext, and without a manifest
+     * and a wrapped key in the database that ciphertext is unrecoverable. Leaving
+     * the test path unarchived would mean the one flow a developer actually
+     * exercises produces evidence nobody can ever open.
      */
     suspend fun stop(): Result<FinalizedRecording> = mutex.withLock {
         val engine = activeEngine.value
             ?: return@withLock Result.failure(IllegalStateException("no recording in progress"))
 
         val result = engine.stop()
-        result.onSuccess { _lastFinalized.value = it }
+        result.onSuccess { finalized ->
+            _lastFinalized.value = finalized
+            archiveQuietly(finalized)
+        }
         result.onFailure { logger.w("test recording failed to stop", it) }
         detach()
         result
+    }
+
+    /**
+     * Seals and stores without ever failing the stop.
+     *
+     * The evidence is already on disk at this point. A failure here means the
+     * *index* is incomplete, not that audio was lost, and reporting the stop as
+     * failed would tell the user their recording was gone when it is intact.
+     */
+    private suspend fun archiveQuietly(capture: FinalizedRecording) {
+        runCatching {
+            evidenceStore.archive(
+                ArchiveRequest(
+                    capture = capture.toRecordingToSeal(),
+                    appVersion = APP_VERSION,
+                    deviceTimezoneId = java.util.TimeZone.getDefault().id,
+                    wakeWordEngineVersion = null,
+                    captureQuality = CAPTURE_QUALITY_NORMAL,
+                    retentionPolicy = RETENTION_KEEP_INDEFINITELY,
+                    nowWallClockMillis = timeProvider.now().epochMillis,
+                ),
+            )
+        }.onFailure { logger.e("test recording sealed but not indexed", it) }
     }
 
     /**
@@ -202,5 +238,8 @@ class EmergencyRecordingController @Inject constructor(
         )
 
         const val ACTIVATION_SOURCE_TEST = "TEST"
+        const val APP_VERSION = "1.0.0-dev"
+        const val CAPTURE_QUALITY_NORMAL = "NORMAL"
+        const val RETENTION_KEEP_INDEFINITELY = "KEEP_INDEFINITELY"
     }
 }

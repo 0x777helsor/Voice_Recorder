@@ -17,6 +17,19 @@ enum class ActivationSource {
     WIDGET,
     BLUETOOTH,
     HEADSET,
+
+    /**
+     * The user started it deliberately from inside the app.
+     *
+     * Distinct from [WIDGET] and [NOTIFICATION] because it is a different trust
+     * story, and that distinction is recorded on the evidence. An in-app tap is
+     * unambiguous and deliberate. A wake word is a probabilistic guess about what
+     * someone said, and a volume pattern is a guess about which buttons were
+     * pressed. All three can be wrong; only the first is reliably a decision, and a
+     * reader of the evidence is entitled to know which one produced it.
+     */
+    IN_APP_BUTTON,
+
     TEST,
     ;
 
@@ -25,6 +38,17 @@ enum class ActivationSource {
      * synchronized unless the user separately opts in.
      */
     val isTest: Boolean get() = this == TEST
+
+    /**
+     * True when the source is a probabilistic inference rather than a deliberate
+     * user action.
+     *
+     * Recorded so a reader can tell "the user pressed record" from "the detector
+     * believed the phrase was spoken". Both start a recording; only one of them is
+     * a decision, and conflating them would misrepresent how the evidence came to
+     * exist.
+     */
+    val isInferred: Boolean get() = this == VOICE || this == PHYSICAL_BUTTON
 }
 
 /**

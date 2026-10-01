@@ -45,8 +45,14 @@ dependencies {
 
     implementation(project(":audio:capture"))
     implementation(project(":audio:wakeword"))
+    // Sealing and storing a finalized recording. The dependency runs
+    // capture -> storage, so :service does not need to know how storage works.
+    implementation(project(":data:local"))
 
     implementation(libs.androidx.core.ktx)
+    // The media session is what makes SafeSignal the media volume owner, which
+    // is the only supported way to receive volume keys while backgrounded.
+    implementation(libs.androidx.media)
     implementation(libs.androidx.lifecycle.service)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
