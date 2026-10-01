@@ -1,5 +1,6 @@
 package com.safesignal.core.crypto
 
+import android.security.keystore.StrongBoxUnavailableException
 import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -53,26 +54,20 @@ class AndroidKeystoreKeyProvider(
 
     override fun ensureKeyEstablishmentKey(alias: String) {
         if (containsKeyEstablishmentKey(alias)) return
-        val generator = KeyGenerator.getInstance(KeyPropertiesAlgorithm.AES, providerName)
-        generator.init(
-            KeyGenParameterSpecBuilderCompat.build(
-                alias = alias,
-                purposes = purposesEncryptDecrypt,
-            ),
-        )
-        generator.generateKey()
+        generateKeyWithStrongBoxFallback { useStrongBox ->
+            KeyGenerator.getInstance(KeyPropertiesAlgorithm.AES, providerName).apply {
+                init(KeyGenParameterSpecBuilderCompat.buildAes(alias, useStrongBox))
+            }.generateKey()
+        }
     }
 
     override fun ensureSigningKey(alias: String) {
         if (containsSigningKey(alias)) return
-        val generator = KeyPairGenerator.getInstance(KeyPropertiesAlgorithm.EC, providerName)
-        generator.initialize(
-            KeyGenParameterSpecBuilderCompat.build(
-                alias = alias,
-                purposes = purposesSignVerify,
-            ),
-        )
-        generator.generateKeyPair()
+        generateKeyWithStrongBoxFallback { useStrongBox ->
+            KeyPairGenerator.getInstance(KeyPropertiesAlgorithm.EC, providerName).apply {
+                initialize(KeyGenParameterSpecBuilderCompat.buildEc(alias, useStrongBox))
+            }.generateKeyPair()
+        }
     }
 
     override fun wrapKey(alias: String, plaintextKey: ByteArray): WrappedKey {
@@ -140,8 +135,18 @@ class AndroidKeystoreKeyProvider(
         return entry.publicKey
     }
 
+    /**
+     * The encoded public key for publication.
+     *
+     * Reads the **public** key out of the certificate, not the private key.
+     * `PrivateKey.getEncoded()` returns null on Android Keystore by design —
+     * keys are non-exportable — so the previous `requireSigningKey(alias).encoded`
+     * threw `NullPointerException` on every real device and would have published
+     * an empty verification key inside every evidence package, making the package
+     * unverifiable by anyone.
+     */
     override fun signingPublicKey(alias: String): ByteArray =
-        requireSigningKey(alias).encoded
+        requireSigningPublicKey(alias).encoded
 
     override fun containsKeyEstablishmentKey(alias: String): Boolean = try {
         keyStore.containsAlias(alias) && keyStore.getKey(alias, null) is SecretKey
@@ -197,37 +202,88 @@ object KeyPropertiesAlgorithm {
 /**
  * Builds `KeyGenParameterSpec` without dragging the whole `KeyProperties` name
  * space into every file.
+ *
+ * There is one builder method per key purpose rather than one shared method,
+ * because the parameters are not interchangeable. Encryption keys need block
+ * modes and paddings; signing keys are rejected if given them. An earlier version
+ * passed the same spec to both and only escaped failing unit tests because those
+ * tests never touched the real Keystore.
  */
 private object KeyGenParameterSpecBuilderCompat {
-    fun build(alias: String, purposes: Int): android.security.keystore.KeyGenParameterSpec {
-        val builder = android.security.keystore.KeyGenParameterSpec.Builder(
-            alias,
-            purposes,
-        )
+
+    /** AES-256-GCM key-establishment key. */
+    fun buildAes(alias: String, useStrongBox: Boolean): android.security.keystore.KeyGenParameterSpec =
+        base(alias, purposesEncryptDecrypt, useStrongBox)
             .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
+            .build()
+
+    /**
+     * EC P-256 signing key.
+     *
+     * No block modes, no encryption padding: those describe ciphers, and a
+     * sign/verify key has none. The digest is pinned to SHA-256, which is the
+     * only digest [AndroidKeystoreKeyProvider] signs with.
+     */
+    fun buildEc(alias: String, useStrongBox: Boolean): android.security.keystore.KeyGenParameterSpec =
+        base(alias, purposesSignVerify, useStrongBox)
+            .setDigests(android.security.keystore.KeyProperties.DIGEST_SHA256)
+            .build()
+
+    private fun base(
+        alias: String,
+        purposes: Int,
+        useStrongBox: Boolean,
+    ): android.security.keystore.KeyGenParameterSpec.Builder {
+        val builder = android.security.keystore.KeyGenParameterSpec.Builder(alias, purposes)
             // See class docs: user authentication is deliberately not required,
             // because activation must be able to finalize evidence unattended.
             .setUserAuthenticationRequired(false)
-            .setRandomizedEncryptionRequired(true)
 
-        // StrongBox, where available, keeps the KEK inside a dedicated secure
-        // element. Requesting it is a hint; devices without it fall back.
-        //
-        // setIsStrongBoxBacked() was added in API 28. Wrapping it in runCatching
-        // is NOT sufficient: on API 26/27 the method does not exist, so the call
-        // throws NoSuchMethodError. An explicit version check is required.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            runCatching { builder.setIsStrongBoxBacked(true) }
-        }
-
+        // setIsStrongBoxBacked() and setUnlockedDeviceRequired() were added in
+        // API 28. The version check is required, not defensive: on API 26/27 the
+        // methods do not exist and the call would throw NoSuchMethodError.
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
             builder.setUnlockedDeviceRequired(true)
+            if (useStrongBox) builder.setIsStrongBoxBacked(true)
         }
 
-        return builder.build()
+        return builder
     }
 }
+
+/**
+ * Generates a Keystore key, retrying once without StrongBox.
+ *
+ * StrongBox is **not a hint**. `setIsStrongBoxBacked(true)` makes the dedicated
+ * secure element a requirement, and on a device that cannot provide one, key
+ * generation fails outright with [StrongBoxUnavailableException] rather than
+ * quietly falling back. Wrapping only the builder call in `runCatching` — as an
+ * earlier version of this file did — achieves nothing, because the builder does
+ * not throw; the exception surfaces later, from `generateKey`/`generateKeyPair`.
+ *
+ * This was not theoretical. On a Galaxy A51 (Exynos 9611, no usable StrongBox)
+ * the app could not create a key at all, so it could not protect a single
+ * recording. No unit test using a fake [KeyProvider] could observe it, because
+ * the fake never reaches the platform. It was found by the readiness probe
+ * performing a real wrap/unwrap on a real device.
+ *
+ * The retry is deliberately narrow. Only a genuine StrongBox-unavailable signal
+ * triggers a second attempt; any other failure propagates on the first try, and a
+ * second failure propagates too. The provider still fails closed rather than
+ * degrading to an exportable software key.
+ *
+ * @param attempt receives whether to demand StrongBox. It must build a fresh
+ *   generator on each call, because a generator whose `generateKey` has thrown is
+ *   not reusable.
+ */
+internal inline fun <T> generateKeyWithStrongBoxFallback(attempt: (useStrongBox: Boolean) -> T): T =
+    try {
+        attempt(true)
+    } catch (strongBoxUnavailable: StrongBoxUnavailableException) {
+        attempt(false)
+    }
 
 private const val purposesEncryptDecrypt =
     android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or
